@@ -86,5 +86,6 @@
   "source_type_catalog": "каталог моделей",
   "source_type_registry": "реестр (не твой конфиг)",
   "agent_word": "агент",
-  "list_sources_hint": "список найденных агентов"
+  "list_sources_hint": "список найденных агентов",
+  "server_stale": "сервер старой версии — перезапусти его"
 }

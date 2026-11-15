@@ -195,8 +195,17 @@ async function loadSources(deep) {
   const q = deep === undefined ? "" : ("?deep=" + (deep ? "1" : "0"));
   $("#srcstate").textContent = t("state_scanning", "scanning...");
   try {
-    const j = await (await fetch("/api/sources" + q)).json();
-    SOURCES = j.sources || [];
+    const r = await fetch("/api/sources" + q, { cache: "no-store" });
+    if (!r.ok) {
+      $("#srcstate").textContent = t("server_stale", "restart the server (old version running)");
+      return;
+    }
+    const j = await r.json();
+    if (!j || !Array.isArray(j.sources)) {
+      $("#srcstate").textContent = t("server_stale", "restart the server (old version running)");
+      return;
+    }
+    SOURCES = j.sources;
     $("#srcbadge").textContent = SOURCES.length;
     const probe = SOURCES.filter((s) => s.probeable).length;
     $("#srcstate").textContent =
