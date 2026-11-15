@@ -97,5 +97,6 @@
   "empty_hint2": "или смени active_source в панели",
   "unknown_source": "неизвестный источник, беру",
   "warn_notprobeable": "не прозвонить",
-  "scan_running": "идёт проверка"
+  "scan_running": "идёт проверка",
+  "lang_title": "язык"
 }

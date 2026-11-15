@@ -159,8 +159,12 @@ class Handler(BaseHTTPRequestHandler):
             self._file("favicon.png", "image/png")
         elif p == "/favicon.ico":
             self._file("favicon.png", "image/png")
-        elif p == "/i18n.ru.json":
-            self._file("i18n.ru.json", "application/json; charset=utf-8")
+        elif p.startswith("/i18n.") and p.endswith(".json"):
+            lang = p[len("/i18n."):-len(".json")]
+            if lang not in ("ru", "en"):
+                self._json({"error": "not found"}, 404)
+            else:
+                self._file("i18n.%s.json" % lang, "application/json; charset=utf-8")
         elif p == "/api/config":
             cfg = core.load_config()
             with STATE_LOCK:
@@ -252,6 +256,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE["timeout"] = max(5.0, min(120.0, float(data["timeout"])))
                 if "settings_path" in data:
                     STATE["settings_override"] = str(data.get("settings_path") or "").strip()
+                if data.get("language") in ("ru", "en"):
+                    STATE["language"] = data["language"]
                 st = dict(STATE)
             try:
                 core.save_config({
@@ -259,6 +265,7 @@ class Handler(BaseHTTPRequestHandler):
                     "max_tokens": st["max_tokens"],
                     "timeout_seconds": st["timeout"],
                     "settings_path": st["settings_override"],
+                    "language": st["language"],
                 })
             except Exception:
                 pass

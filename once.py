@@ -21,17 +21,21 @@ import core
 import report
 
 APP_DIR = core.APP_DIR
-I18N_PATH = os.path.join(APP_DIR, "ui", "i18n.ru.json")
 TEXT_REPORT = os.path.join(APP_DIR, "data", "last-run.txt")
 OUT = []
+LANGS = ("ru", "en")
 
 
-def load_i18n():
-    try:
-        with open(I18N_PATH, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:
-        return {}
+def load_i18n(lang="ru"):
+    lang = lang if lang in LANGS else "ru"
+    for cand in (lang, "ru"):
+        try:
+            with open(os.path.join(APP_DIR, "ui", "i18n.%s.json" % cand),
+                      "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except Exception:
+            continue
+    return {}
 
 
 def say(line=""):
@@ -116,14 +120,26 @@ def console_table(results, s, elapsed, T):
 
 def main():
     setup_console()
-    T = load_i18n()
+    # language: explicit flag > config.json > Russian
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--lang", default="")
+    known, _ = pre.parse_known_args()
+    lang = (known.lang or "").strip().lower()
+    if lang not in LANGS:
+        try:
+            lang = (core.load_config().get("language") or "ru").strip().lower()
+        except Exception:
+            lang = "ru"
+    if lang not in LANGS:
+        lang = "ru"
+    T = load_i18n(lang)
 
     ap = argparse.ArgumentParser(description="ModelPulse single pass")
     ap.add_argument("--filter", default="", help="substring on model / provider / host")
     ap.add_argument("--timeout", type=float, default=None)
     ap.add_argument("--max-tokens", type=int, default=None)
     ap.add_argument("--workers", type=int, default=None)
-    ap.add_argument("--lang", default="ru")
+    ap.add_argument("--lang", default="", help="ru or en (default: from config.json)")
     ap.add_argument("--source", default="", help="agent source id (see --list-sources)")
     ap.add_argument("--deep", action="store_true", help="deep scan when listing sources")
     ap.add_argument("--list-sources", action="store_true",
@@ -204,6 +220,7 @@ def main():
             "ts": time.time(),
             "source": path,
             "agent": agent,
+            "lang": lang,
             "nmodels": len(targets),
             "nproviders": len({t["provider_id"] for t in targets}),
             "timeout": timeout,

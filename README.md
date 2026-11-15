@@ -30,6 +30,12 @@ ModelPulse читает **тот же файл** и активно прозва�
    карточки, фильтр, история по каждой модели, доступность за 1ч/24ч, автоопрос по интервалу.
 3. **MCP-тул** — `mcp_server.py` отдаёт инструмент агенту, который по запросу делает тот же прогон.
 
+### Язык интерфейса
+
+Дашборд и отчёт двуязычные: **RU / EN**. Переключатель — сегмент `RU | EN` в правом верхнем углу
+панели; выбор сохраняется в `config.json → language` и применяется к следующему отчёту `once.py`.
+Разово переопределить: `python once.py --lang en`.
+
 ### Требования
 
 - Python 3.10+ (проверено на 3.14, Windows и Linux).
@@ -64,6 +70,7 @@ python server.py --port 8765 --interval 900
   "max_tokens": 16,
   "timeout_seconds": 30,
   "workers": 8,
+  "language": "ru",
   "browser": ""
 }
 ```
@@ -167,6 +174,12 @@ Statuses:
 2. **Web monitor** — `start.cmd` runs a local server (`127.0.0.1:8765`) with a dashboard: cards,
    filter, per-model history, 1h/24h uptime, interval re-scan.
 3. **MCP tool** — `mcp_server.py` exposes a tool the agent can call to run the same pass on demand.
+
+### Interface language
+
+The dashboard and the report are bilingual: **RU / EN**. Toggle via the `RU | EN` segment in the
+top-right corner of the dashboard; the choice is stored in `config.json → language` and applies to
+the next `once.py` report. One-off override: `python once.py --lang en`.
 
 ### Requirements
 

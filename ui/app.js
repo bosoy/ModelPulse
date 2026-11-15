@@ -1,21 +1,24 @@
-// ModelPulse dashboard client (localized via /i18n.ru.json).
+// ModelPulse dashboard client (localized via /i18n.<lang>.json).
 
 const $ = (s) => document.querySelector(s);
 let MODELS = [];
 let T = {};
+let LANG = "ru";
 let FILTER = "all";
 let QUERY = "";
 let PATHCFG = {};
 let SORT = { key: "host", dir: 1 };
 
 const PILL = { reply: "REPLY", empty: "EMPTY", fail: "FAIL" };
+const LOCALES = { ru: "ru-RU", en: "en-US" };
+const DATE_LOCALE = () => LOCALES[LANG] || "ru-RU";
 
 function t(key, fallback) {
   return (T && T[key]) || fallback || key;
 }
 
 function applyI18n() {
-  document.documentElement.lang = "ru";
+  document.documentElement.lang = LANG;
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const k = el.dataset.i18n;
     if (T[k]) el.textContent = T[k];
@@ -23,6 +26,43 @@ function applyI18n() {
   $("#filter").placeholder = t("filter_ph", "filter");
   $("#setpath").placeholder = t("settings_path_ph", "");
   $("#d-close").textContent = t("close", "close");
+  document.querySelectorAll("#lang button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.lang === LANG);
+  });
+  const lt = $("#lang");
+  if (lt) lt.setAttribute("aria-label", t("lang_title", "language"));
+}
+
+async function loadLangPack(lang) {
+  try {
+    const r = await fetch("/i18n." + lang + ".json", { cache: "no-store" });
+    if (!r.ok) throw new Error("no pack");
+    T = await r.json();
+    return true;
+  } catch (e) {
+    if (lang !== "ru") return loadLangPack("ru");
+    T = {};
+    return false;
+  }
+}
+
+async function setLang(lang) {
+  const want = LOCALES[lang] ? lang : "ru";
+  LANG = want;
+  if (!(await loadLangPack(want))) LANG = "ru";
+  applyI18n();
+  render();
+  refresh();
+  const activeId = (SOURCES.find((s) => s.active) || {}).id;
+  renderSources(activeId);
+  setActiveLabel(activeId);
+  try {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: LANG }),
+    });
+  } catch (e) { /* language still applies locally */ }
 }
 
 function pill(status) {
@@ -43,7 +83,7 @@ function fmtTime(ts) {
 
 function fmtDate(ts) {
   if (!ts) return "-";
-  return new Date(ts * 1000).toLocaleString("ru-RU");
+  return new Date(ts * 1000).toLocaleString(DATE_LOCALE());
 }
 
 function upBar(u) {
@@ -84,10 +124,31 @@ function passes(r) {
   return true;
 }
 
+const RANK = { reply: 0, empty: 1, fail: 2 };
+
+function sortValue(r, k) {
+  switch (k) {
+    case "status": return RANK[r.status] ?? 3;
+    case "uptime": {
+      const u = r.uptime_24h;
+      return u ? u.reply_pct : -1;
+    }
+    case "history": {
+      const h = r.history || [];
+      return h.reduce((s, x) => s + (x.status === "reply" ? 1 : 0), 0);
+    }
+    case "note":
+      return String((r.status === "reply" ? r.reply : r.error) || "").toLowerCase();
+    case "http_code": return r.http_code == null ? -1 : r.http_code;
+    case "ms": return r.ms == null ? -1 : r.ms;
+    default: return r[k];
+  }
+}
+
 function cmp(a, b) {
   const k = SORT.key;
-  let va = a[k], vb = b[k];
-  if (k === "model" || k === "host") {
+  let va = sortValue(a, k), vb = sortValue(b, k);
+  if (typeof va === "string" || typeof vb === "string") {
     va = String(va || "").toLowerCase();
     vb = String(vb || "").toLowerCase();
     return va < vb ? -SORT.dir : va > vb ? SORT.dir : 0;
@@ -95,6 +156,15 @@ function cmp(a, b) {
   va = va == null ? -1 : va;
   vb = vb == null ? -1 : vb;
   return (va - vb) * SORT.dir;
+}
+
+function markSort() {
+  document.querySelectorAll("#grid thead th[data-sort]").forEach((th) => {
+    th.classList.remove("asc", "desc");
+    if (th.dataset.sort === SORT.key) {
+      th.classList.add(SORT.dir > 0 ? "asc" : "desc");
+    }
+  });
 }
 
 function render() {
@@ -113,6 +183,7 @@ function render() {
     </tr>`;
   }).join("") || `<tr><td colspan="8" class="note">${t("nothing", "nothing")}</td></tr>`;
 
+  markSort();
   document.querySelectorAll("tr[data-model]").forEach((tr) => {
     tr.onclick = () => openDrawer(tr.dataset.model, tr.dataset.host);
   });
@@ -203,7 +274,7 @@ function renderSources(active) {
   list.innerHTML = SOURCES.map((s) => `
     <div class="src-row ${s.active ? "on" : ""}${s.probeable ? "" : " noprobe"}" data-id="${esc(s.id)}">
       <span class="dotmark">${s.active ? "\u25cf" : "\u25cb"}</span>
-      <span class="sname">${esc(s.agent)}${s.probeable ? "" : ' <span class="note">(не прозвонить)</span>'}</span>
+      <span class="sname">${esc(s.agent)}${s.probeable ? "" : ' <span class="note">(' + esc(t("warn_notprobeable", "cannot probe")) + ')</span>'}</span>
       <span class="spath" title="${esc(s.path)}">${esc(s.path)}</span>
       <span class="scount">${s.model_count}</span>
       <span class="stag">${srcTag(s)}</span>
@@ -401,10 +472,18 @@ $("#srcrescan").onclick = () => loadSources($("#deepscan").checked);
 
 $("#deepscan").onchange = () => loadSources($("#deepscan").checked);
 
+document.querySelectorAll("#lang button").forEach((b) => {
+  b.onclick = () => { if (b.dataset.lang !== LANG) setLang(b.dataset.lang); };
+});
+
 (async () => {
+  let saved = "ru";
   try {
-    T = await (await fetch("/i18n.ru.json")).json();
-  } catch (e) { T = {}; }
+    const c = await (await fetch("/api/config", { cache: "no-store" })).json();
+    saved = (c.config && c.config.language) || "ru";
+  } catch (e) { /* fall back to Russian */ }
+  LANG = LOCALES[saved] ? saved : "ru";
+  await loadLangPack(LANG);
   applyI18n();
   await loadConfig();
   refresh();

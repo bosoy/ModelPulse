@@ -15,10 +15,14 @@ import time
 from pathlib import Path
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-I18N_PATH = os.path.join(APP_DIR, "ui", "i18n.ru.json")
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 REPORT_DIR = os.path.join(APP_DIR, "data", "reports")
 KEEP_REPORTS = 50
+LANGS = ("ru", "en")
+
+
+def _pack_path(lang):
+    return os.path.join(APP_DIR, "ui", "i18n.%s.json" % lang)
 
 _CSS = """
 :root{--bg:#0e1116;--panel:#151a22;--panel2:#1b222c;--line:#263040;--fg:#d7dee8;
@@ -62,12 +66,24 @@ footer .sep{opacity:.4}
 """
 
 
-def load_i18n():
+def load_i18n(lang="ru"):
+    lang = lang if lang in LANGS else "ru"
+    for cand in (lang, "ru"):
+        try:
+            with open(_pack_path(cand), "r", encoding="utf-8") as fh:
+                return json.load(fh)
+        except Exception:
+            continue
+    return {}
+
+
+def config_lang():
     try:
-        with open(I18N_PATH, "r", encoding="utf-8") as fh:
-            return json.load(fh)
+        with open(CONFIG_PATH, "r", encoding="utf-8") as fh:
+            lang = (json.load(fh) or {}).get("language")
+        return lang if lang in LANGS else "ru"
     except Exception:
-        return {}
+        return "ru"
 
 
 def _t(T, key, default):
@@ -83,7 +99,8 @@ def _short(text, limit=120):
 
 
 def render(results, meta, T=None):
-    T = T if T is not None else load_i18n()
+    lang = meta.get("lang") if meta.get("lang") in LANGS else "ru"
+    T = T if T is not None else load_i18n(lang)
     summary = {
         "reply": sum(1 for r in results if r["status"] == "reply"),
         "empty": sum(1 for r in results if r["status"] == "empty"),
@@ -131,7 +148,7 @@ def render(results, meta, T=None):
 
     when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(meta.get("ts") or time.time()))
     return """<!DOCTYPE html>
-<html lang="ru">
+<html lang="%(lang)s">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -171,6 +188,7 @@ def render(results, meta, T=None):
 </body>
 </html>
 """ % {
+        "lang": _esc(lang),
         "title": _esc(_t(T, "app_name", "ModelPulse")),
         "app": _esc(_t(T, "app_name", "ModelPulse")),
         "subtitle": _esc(_t(T, "report_subtitle", "single pass report")),
@@ -222,11 +240,13 @@ def _prune(keep=KEEP_REPORTS):
 
 def write_report(results, meta, T=None):
     """Render, save a timestamped copy + last-run.html, return the main path."""
-    T = T if T is not None else load_i18n()
+    meta = dict(meta)
+    if meta.get("lang") not in LANGS:
+        meta["lang"] = config_lang()
+    T = T if T is not None else load_i18n(meta["lang"])
     os.makedirs(REPORT_DIR, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(meta.get("ts") or time.time()))
     main_path = os.path.join(REPORT_DIR, "report-%s.html" % stamp)
-    meta = dict(meta)
     meta["report_name"] = os.path.basename(main_path)
     html_out, summary = render(results, meta, T)
     with open(main_path, "w", encoding="utf-8") as fh:

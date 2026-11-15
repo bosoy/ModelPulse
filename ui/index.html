@@ -15,6 +15,10 @@
     <span class="sub" data-i18n="tagline"></span>
   </div>
   <div class="controls">
+    <div class="lang" id="lang" role="group" aria-label="language">
+      <button data-lang="ru" class="on">RU</button>
+      <button data-lang="en">EN</button>
+    </div>
     <label><span data-i18n="interval"></span>
       <input id="interval" type="number" min="60" step="60" value="900">
       <span class="unit" data-i18n="seconds"></span>
@@ -73,14 +77,14 @@
 <table id="grid">
   <thead>
     <tr>
-      <th class="s" data-i18n="col_st"></th>
+      <th class="s" data-sort="status" data-i18n="col_st"></th>
       <th data-sort="model" data-i18n="col_model"></th>
       <th data-sort="host" data-i18n="col_host"></th>
       <th data-sort="ms" class="num" data-i18n="col_ms"></th>
       <th data-sort="http_code" class="num" data-i18n="col_http"></th>
-      <th data-i18n="col_uptime"></th>
-      <th data-i18n="col_spark"></th>
-      <th data-i18n="col_note"></th>
+      <th data-sort="uptime" data-i18n="col_uptime"></th>
+      <th data-sort="history" data-i18n="col_spark"></th>
+      <th data-sort="note" data-i18n="col_note"></th>
     </tr>
   </thead>
   <tbody id="rows"></tbody>
