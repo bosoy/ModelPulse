@@ -1,5 +1,9 @@
 # ModelPulse
 
+**In plain words:** your agent is connected to a long list of models. ModelPulse tells you which of
+them are actually answering right now — and which are down — so you can switch before you hit an
+error.
+
 Model availability monitor for your AI agent's BYOK providers, with an on-demand MCP tool, a web
 dashboard, and a one-shot HTML report.
 
@@ -145,6 +149,9 @@ no reports, no DB, no logs, no disk. The server binds to `127.0.0.1` only.
 ---
 
 ## Русский
+
+**Простыми словами:** у агента подключён длинный список моделей. ModelPulse показывает, какие из
+них реально отвечают **сейчас**, а какие лежат — чтобы переключиться до того, как получишь ошибку.
 
 ### Что это
 
