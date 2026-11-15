@@ -131,8 +131,32 @@ function setCards(last) {
   $("#c-total").textContent = last ? last.total : "-";
 }
 
+let SCANNING = false;
+let SCAN_HOLD = 0;
+
+function setScanning(on, sub) {
+  const ov = $("#scan-overlay");
+  if (!ov) return;
+  if (on) {
+    $("#scan-sub").textContent = sub || "";
+    ov.classList.remove("hidden");
+  } else {
+    ov.classList.add("hidden");
+  }
+}
+
+function scanSub(j) {
+  const who = activeLabel(j.active) || j.agent || "";
+  const n = j.models ? j.models + " " + t("models_word", "models") : "";
+  return [who, n].filter(Boolean).join(" - ");
+}
+
 async function loadSource() {
   const j = await (await fetch("/api/source")).json();
+  const now = Date.now();
+  const show = !!j.scanning || now < SCAN_HOLD;
+  SCANNING = show;
+  setScanning(show, scanSub(j));
   $("#c-source").textContent = j.path || "-";
   $("#c-source-meta").textContent =
     `${j.agent || "-"} - ${t("providers", "providers")}: ${j.providers} - ${t("models_word", "models")}: ${j.models}`
@@ -303,8 +327,10 @@ $("#d-close").onclick = () => $("#drawer").classList.add("hidden");
 
 $("#runnow").onclick = async () => {
   $("#scanstate").textContent = t("state_starting", "starting...");
+  SCAN_HOLD = Date.now() + 4000;
+  setScanning(true, t("state_starting", "starting..."));
   await fetch("/api/run", { method: "POST" });
-  setTimeout(refresh, 1200);
+  setTimeout(refresh, 900);
 };
 
 $("#saveset").onclick = async () => {

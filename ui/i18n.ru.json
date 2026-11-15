@@ -96,5 +96,6 @@
   "empty_hint": "выбери прозваниваемый агент: python once.py --list-sources",
   "empty_hint2": "или смени active_source в панели",
   "unknown_source": "неизвестный источник, беру",
-  "warn_notprobeable": "не прозвонить"
+  "warn_notprobeable": "не прозвонить",
+  "scan_running": "идёт проверка"
 }
