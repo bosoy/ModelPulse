@@ -5,7 +5,7 @@ The report is a standalone file on disk, so it stays open in the browser
 after this window closes. Double-click once.cmd or run:
     python once.py
 Optional:
-    python once.py --filter wusrouter --timeout 30 --max-tokens 16
+    python once.py --filter wusrouter --timeout 30 --max-tokens 4096
     python once.py --no-open      (render the file, do not launch a browser)
 Source is ASCII-only (Python 3.14 on Windows reads .py as cp1251).
 All user-facing Russian text lives in ui/i18n.ru.json.
@@ -19,6 +19,7 @@ import time
 
 import core
 import report
+import storage
 
 APP_DIR = core.APP_DIR
 TEXT_REPORT = os.path.join(APP_DIR, "data", "last-run.txt")
@@ -161,7 +162,7 @@ def main():
 
     cfg = core.load_config()
     timeout = args.timeout if args.timeout is not None else float(cfg.get("timeout_seconds") or 30)
-    max_tokens = args.max_tokens if args.max_tokens is not None else int(cfg.get("max_tokens") or 16)
+    max_tokens = args.max_tokens if args.max_tokens is not None else int(cfg.get("max_tokens") or core.DEFAULT_MAX_TOKENS)
     workers = args.workers if args.workers is not None else int(cfg.get("workers") or 8)
 
     try:
@@ -197,9 +198,34 @@ def main():
     say(T.get("probing", "probing..."))
     say("")
 
+    # respect mutes: skip models the user wrote off, and carry the dead verdict
+    # from stored history so the report can single them out
+    hidden_rows = []
+    try:
+        store = storage.Store()
+        muted = store.hidden_set()
+        hidden_rows = store.hidden_list()
+    except Exception:
+        store, muted = None, set()
+    if muted:
+        skipped = [t for t in targets if (t["model"], t["host"]) in muted]
+        targets = [t for t in targets if (t["model"], t["host"]) not in muted]
+        if skipped:
+            say("%s: %d" % (T.get("skipped_hidden", "skipped (hidden)"), len(skipped)))
+
     t0 = time.time()
     results = core.scan(targets, timeout=timeout, workers=workers, max_tokens=max_tokens)
     elapsed = time.time() - t0
+
+    # enrich with the dead verdict from history (dashboard-parity)
+    if store is not None:
+        verdicts = {(r["model"], r["host"]): r for r in store.latest_per_model()}
+        for r in results:
+            v = verdicts.get((r["model"], r["host"]))
+            if v:
+                r["dead"] = v["dead"]
+                r["reason_code"] = v["reason_code"]
+                r["reason_text"] = v["reason_text"]
 
     rank = {"reply": 0, "empty": 1, "fail": 2}
     results.sort(key=lambda r: (rank.get(r["status"], 3), r["host"], r["model"]))
@@ -227,6 +253,10 @@ def main():
             "max_tokens": max_tokens,
             "workers": workers,
             "elapsed": elapsed,
+            "hidden": [{"model": h["model"], "host": h["host"],
+                        "reason_code": h.get("reason_code") or "",
+                        "reason_text": h.get("reason_text") or ""}
+                       for h in hidden_rows],
         }
         try:
             page, _ = report.write_report(results, meta, T)

@@ -14,6 +14,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import core
+import locate
 import storage
 
 UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
@@ -22,7 +23,7 @@ STATE = {
     "last_scan_started": None,
     "last_scan_finished": None,
     "interval": 900,
-    "max_tokens": 16,
+    "max_tokens": core.DEFAULT_MAX_TOKENS,
     "timeout": 30.0,
     "source_path": None,
     "source_mtime": None,
@@ -35,7 +36,11 @@ STATE = {
     "last_cancelled": False,
     "language": "ru",
     "theme": "system",
+    "dead_min_runs": 3,
     "settings_override": "",
+    "scan_total": 0,
+    "scan_done": 0,
+    "scan_current": None,
 }
 STATE_LOCK = threading.Lock()
 STORE = None
@@ -72,11 +77,35 @@ def do_scan(trigger):
             STATE["source_mtime"] = mtime
             STATE["source_agent"] = (src["agent"] if src else "Qoder")
             STATE["provider_count"] = len({t["provider_id"] for t in targets})
-            STATE["model_count"] = len(targets)
             STATE["last_error"] = None
+        # muted models are not probed at all: their history stays, but we save
+        # time and quota on ones the user already wrote off
+        try:
+            muted = STORE.hidden_set()
+        except Exception:
+            muted = set()
+        if muted:
+            targets = [t for t in targets
+                       if (t["model"], t["host"]) not in muted]
+        with STATE_LOCK:
+            STATE["model_count"] = len(targets)
+            STATE["scan_total"] = len(targets)
+            STATE["scan_done"] = 0
+            STATE["scan_current"] = None
+
+        def on_result(r):
+            # streamed from core.scan as each probe lands, so the UI can show
+            # real progress: how many checked, which model, and its timing
+            with STATE_LOCK:
+                STATE["scan_done"] += 1
+                STATE["scan_current"] = {
+                    "model": r.get("model"), "host": r.get("host"),
+                    "status": r.get("status"), "ms": r.get("ms"),
+                }
+
         results = core.scan(targets, timeout=STATE["timeout"],
                             max_tokens=STATE["max_tokens"],
-                            should_stop=CANCEL.is_set)
+                            should_stop=CANCEL.is_set, on_result=on_result)
         cancelled = CANCEL.is_set()
         summary = core.summarize(results)
         run_id = None
@@ -212,6 +241,21 @@ class Handler(BaseHTTPRequestHandler):
                 "last_error": st["last_error"],
                 "last_cancelled": st.get("last_cancelled", False),
             })
+        elif p == "/api/progress":
+            with STATE_LOCK:
+                st = dict(STATE)
+            started = st.get("last_scan_started")
+            elapsed = (time.time() - started) if (st["scanning"] and started) else 0.0
+            total = st.get("scan_total") or 0
+            done = st.get("scan_done") or 0
+            self._json({
+                "scanning": st["scanning"],
+                "total": total,
+                "done": done,
+                "percent": (round(100.0 * done / total) if total else 0),
+                "current": st.get("scan_current"),
+                "elapsed": round(elapsed, 1),
+            })
         elif p == "/api/sources":
             from urllib.parse import parse_qs
             q = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
@@ -226,6 +270,18 @@ class Handler(BaseHTTPRequestHandler):
             for s in sources:
                 s["active"] = (s["id"] == active)
             self._json({"sources": sources, "active": active})
+        elif p == "/api/find-model":
+            from urllib.parse import parse_qs
+            q = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            query = (q.get("q") or [""])[0]
+            deep = (q.get("deep") or ["0"])[0] in ("1", "true", "yes")
+            meta = (q.get("meta") or ["0"])[0] in ("1", "true", "yes")
+            try:
+                hits = locate.find_model(query, deep=deep, include_meta=meta)
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
+                return
+            self._json({"query": query, "hits": hits, "count": len(hits)})
         elif p == "/api/summary":
             last = STORE.last_run()
             with STATE_LOCK:
@@ -233,19 +289,27 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"state": st, "last_run": last,
                         "recent_runs": STORE.recent_runs(30)})
         elif p == "/api/models":
-            rows = STORE.latest_per_model()
+            rows = STORE.latest_per_model(min_runs=STATE.get("dead_min_runs", 3))
             now = time.time()
             for r in rows:
                 r["uptime_24h"] = STORE.uptime(r["model"], r["host"], now - 86400)
                 r["uptime_1h"] = STORE.uptime(r["model"], r["host"], now - 3600)
+                r["note_code"] = core.classify_note(
+                    r.get("status"), r.get("http_code"), r.get("error"))
+                r["note_text"] = core.note_text(r.get("error"))
             self._json({"models": rows})
         elif p.startswith("/api/model/"):
             from urllib.parse import unquote, parse_qs
             q = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
             model = unquote(p[len("/api/model/"):])
             host = (q.get("host") or [""])[0]
+            probes = STORE.model_detail(model, host)
+            for pr in probes:
+                pr["note_code"] = core.classify_note(
+                    pr.get("status"), pr.get("http_code"), pr.get("error"))
+                pr["note_text"] = core.note_text(pr.get("error"))
             self._json({"model": model, "host": host,
-                        "probes": STORE.model_detail(model, host),
+                        "probes": probes,
                         "uptime_24h": STORE.uptime(model, host, time.time() - 86400)})
         elif p == "/api/runs":
             self._json({"runs": STORE.recent_runs(200)})
@@ -279,7 +343,7 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(data.get("interval"), (int, float)):
                     STATE["interval"] = max(60, int(data["interval"]))
                 if isinstance(data.get("max_tokens"), (int, float)):
-                    STATE["max_tokens"] = max(1, min(4096, int(data["max_tokens"])))
+                    STATE["max_tokens"] = max(1, min(8192, int(data["max_tokens"])))
                 if isinstance(data.get("timeout"), (int, float)):
                     STATE["timeout"] = max(5.0, min(120.0, float(data["timeout"])))
                 if "settings_path" in data:
@@ -335,6 +399,78 @@ class Handler(BaseHTTPRequestHandler):
                 pass
             ok, err = open_in_explorer(target)
             self._json({"ok": ok, "path": target, "error": err})
+        elif p == "/api/hide":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            model = str(data.get("model") or "").strip()
+            host = str(data.get("host") or "").strip()
+            if not model or not host:
+                self._json({"error": "model and host required"}, 400)
+                return
+            STORE.hide(model, host,
+                       reason_code=str(data.get("reason_code") or ""),
+                       reason_text=str(data.get("reason_text") or ""),
+                       provider_id=str(data.get("provider_id") or ""))
+            self._json({"ok": True, "model": model, "host": host, "hidden": True})
+        elif p == "/api/unhide":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            model = str(data.get("model") or "").strip()
+            host = str(data.get("host") or "").strip()
+            if not model or not host:
+                self._json({"error": "model and host required"}, 400)
+                return
+            changed = STORE.unhide(model, host)
+            self._json({"ok": True, "model": model, "host": host,
+                        "hidden": False, "existed": changed})
+        elif p == "/api/delete-model":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            model = str(data.get("model") or "").strip()
+            provider_id = str(data.get("provider_id") or "").strip()
+            host = str(data.get("host") or "").strip()
+            source_id = str(data.get("source_id") or "").strip()
+            if not model:
+                self._json({"error": "model required"}, 400)
+                return
+            if source_id:
+                # edit whichever agent the client picked, by its own format
+                try:
+                    src = core.resolve_source(source_id)
+                except Exception as e:
+                    self._json({"error": str(e)}, 500)
+                    return
+                if src is None or src.get("id") != source_id:
+                    self._json({"error": "unknown source: %s" % source_id}, 404)
+                    return
+                res = core.remove_model_in_source(src, provider_id, model)
+            else:
+                # legacy single-file path: the agent settings json
+                res = core.remove_model(core.resolve_settings_path(),
+                                        provider_id, model)
+            if res.get("ok") and host:
+                # the file change alone leaves the row in history; mute it too
+                # so the dashboard list actually gets cleaner, while its probe
+                # history survives under the "hidden" filter
+                try:
+                    STORE.hide(model, host, reason_code="removed_from_agent",
+                               reason_text="removed from the agent's list",
+                               provider_id=provider_id)
+                except Exception:
+                    pass
+            self._json(res, 200 if res.get("ok") else 409)
         else:
             self._json({"error": "not found"}, 404)
 
@@ -352,10 +488,11 @@ def main():
     cfg = core.load_config()
     with STATE_LOCK:
         STATE["interval"] = max(60, int(cfg.get("interval_seconds") or args.interval))
-        STATE["max_tokens"] = max(1, int(cfg.get("max_tokens") or 16))
+        STATE["max_tokens"] = max(1, int(cfg.get("max_tokens") or core.DEFAULT_MAX_TOKENS))
         STATE["timeout"] = max(5.0, float(cfg.get("timeout_seconds") or 30))
         STATE["language"] = cfg.get("language") or "ru"
         STATE["theme"] = cfg.get("theme") or "system"
+        STATE["dead_min_runs"] = max(1, int(cfg.get("dead_min_runs") or 3))
         STATE["settings_override"] = (cfg.get("settings_path") or "").strip()
         STATE["active_source"] = (cfg.get("active_source") or "qoder").strip()
 

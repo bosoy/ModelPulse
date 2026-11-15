@@ -6,6 +6,8 @@ import sqlite3
 import threading
 import time
 
+import core
+
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "modelpulse.db")
 
 SCHEMA = """
@@ -36,6 +38,15 @@ CREATE TABLE IF NOT EXISTS probes (
 );
 CREATE INDEX IF NOT EXISTS idx_probes_model_ts ON probes(model, ts);
 CREATE INDEX IF NOT EXISTS idx_probes_run ON probes(run_id);
+CREATE TABLE IF NOT EXISTS hidden (
+    model       TEXT NOT NULL,
+    host        TEXT NOT NULL,
+    provider_id TEXT,
+    hidden_at   REAL NOT NULL,
+    reason_code TEXT,
+    reason_text TEXT,
+    PRIMARY KEY (model, host)
+);
 """
 
 
@@ -78,6 +89,36 @@ class Store(object):
                 " http_code, ms, reply, error) VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
             self._conn.commit()
 
+    # -- hidden (muted) models -------------------------------------------
+    def hide(self, model, host, reason_code="", reason_text="", provider_id=""):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO hidden (model, host, provider_id, hidden_at,"
+                " reason_code, reason_text) VALUES (?,?,?,?,?,?) "
+                "ON CONFLICT(model, host) DO UPDATE SET hidden_at=excluded.hidden_at,"
+                " reason_code=excluded.reason_code, reason_text=excluded.reason_text",
+                (model, host, provider_id, time.time(), reason_code, reason_text))
+            self._conn.commit()
+
+    def unhide(self, model, host):
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM hidden WHERE model=? AND host=?", (model, host))
+            self._conn.commit()
+            return cur.rowcount > 0
+
+    def hidden_set(self):
+        """{(model, host)} currently muted, for skipping them during a scan."""
+        with self._lock:
+            rows = self._conn.execute("SELECT model, host FROM hidden").fetchall()
+        return {(r["model"], r["host"]) for r in rows}
+
+    def hidden_list(self):
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM hidden ORDER BY hidden_at DESC").fetchall()
+        return [dict(r) for r in rows]
+
     # -- reads ----------------------------------------------------------
     def last_run(self):
         with self._lock:
@@ -85,8 +126,9 @@ class Store(object):
                 "SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
         return dict(row) if row else None
 
-    def latest_per_model(self):
-        """Most recent probe row for every (model, host) pair."""
+    def latest_per_model(self, min_runs=3):
+        """Most recent probe row for every (model, host) pair, plus a dead
+        verdict and its muted flag. History is kept regardless of hiding."""
         sql = """
         SELECT p.* FROM probes p
         JOIN (SELECT model, host, MAX(ts) AS mts FROM probes GROUP BY model, host) x
@@ -95,22 +137,29 @@ class Store(object):
         """
         with self._lock:
             rows = self._conn.execute(sql).fetchall()
+        hidden = self.hidden_set()
         out = []
         for r in rows:
             d = dict(r)
             d["key"] = (r["host"] or "") + "|" + r["model"]
             d["history"] = self._history(r["model"], r["host"], 40)
+            is_dead, code, text = core.classify_dead(d["history"], min_runs=min_runs)
+            d["dead"] = is_dead
+            d["reason_code"] = code or ""
+            d["reason_text"] = text
+            d["hidden"] = (r["model"], r["host"]) in hidden
             out.append(d)
         return out
 
     def _history(self, model, host, limit=40):
         with self._lock:
             rows = self._conn.execute(
-                "SELECT ts, status, ms, http_code FROM probes "
+                "SELECT ts, status, ms, http_code, error FROM probes "
                 "WHERE model=? AND host=? ORDER BY ts DESC LIMIT ?",
                 (model, host, limit)).fetchall()
         return [{"ts": r["ts"], "status": r["status"], "ms": r["ms"],
-                 "http_code": r["http_code"]} for r in reversed(rows)]
+                 "http_code": r["http_code"], "error": r["error"]}
+                for r in reversed(rows)]
 
     def model_detail(self, model, host):
         with self._lock:

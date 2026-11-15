@@ -14,6 +14,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import core
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 REPORT_DIR = os.path.join(APP_DIR, "data", "reports")
@@ -59,6 +61,22 @@ letter-spacing:.3px}
 .note.err{color:var(--fail)}
 .note.reason{color:var(--empty)}
 .ok{color:var(--up)}
+.badge-dead{display:inline-block;padding:1px 6px;border-radius:10px;font-size:10px;
+font-weight:700;letter-spacing:.4px;text-transform:uppercase;color:var(--fail);
+border:1px solid #5c2420;background:#3a1715}
+tr.dead td{background:#3a1715}
+.sec{margin:6px 20px 20px;border:1px solid var(--line);border-radius:8px;
+background:var(--panel);overflow:hidden}
+.sec h2{margin:0;padding:9px 14px;font-size:13px;border-bottom:1px solid var(--line);
+color:var(--fail);letter-spacing:.3px}
+.sec.hidden-sec h2{color:var(--empty)}
+.sec .row{display:grid;grid-template-columns:1fr 180px 2fr;gap:10px;padding:7px 14px;
+border-bottom:1px solid var(--line);font-size:12px}
+.sec .row:last-child{border-bottom:none}
+.sec .row .m{font-family:Consolas,"Cascadia Mono",monospace;word-break:break-all}
+.sec .row .h{color:var(--dim)}
+.sec .row .r{color:var(--dim)}
+.sec .none{padding:10px 14px;color:var(--dim);font-size:12px}
 footer{padding:8px 20px 28px;color:var(--dim);font-size:12px;display:flex;
 gap:10px;flex-wrap:wrap;align-items:center}
 footer .sep{opacity:.4}
@@ -98,6 +116,30 @@ def _short(text, limit=120):
     return "".join(c if 32 <= ord(c) else " " for c in str(text)).strip()[:limit]
 
 
+def _section(title, items, T, is_hidden):
+    """A dead/hidden block: model, host, and why it was written off."""
+    rows = []
+    for r in items:
+        code = r.get("reason_code") or ""
+        reason = _t(T, "dead_" + code, r.get("reason_text") or "") if code \
+            else (r.get("reason_text") or "")
+        if not reason:
+            ncode = core.classify_note(r.get("status"), r.get("http_code"),
+                                       r.get("error"))
+            reason = (_t(T, "note_" + (ncode or "error"), "")
+                      or core.note_text(r.get("error"))
+                      or (r.get("error") or ""))
+        rows.append(
+            '<div class="row"><span class="m">%s</span>'
+            '<span class="h">%s</span><span class="r">%s</span></div>' % (
+                _esc(r.get("model") or ""), _esc(r.get("host") or ""),
+                _esc(_short(reason, 160))))
+    cls = "sec hidden-sec" if is_hidden else "sec"
+    return '<section class="%s"><h2>%s (%d)</h2>%s</section>' % (
+        cls, _esc(title), len(rows),
+        "".join(rows) or '<div class="none">-</div>')
+
+
 def render(results, meta, T=None):
     lang = meta.get("lang") if meta.get("lang") in LANGS else "ru"
     T = T if T is not None else load_i18n(lang)
@@ -112,22 +154,45 @@ def render(results, meta, T=None):
         "empty": _t(T, "st_empty", "EMPTY"),
         "fail": _t(T, "st_fail", "FAIL"),
     }
+    # a probe row carries the dead verdict when the caller enriched it
+    def _is_dead(r):
+        return bool(r.get("dead"))
+
+    def _reason(r):
+        code = r.get("reason_code") or ""
+        return _t(T, "dead_" + code, r.get("reason_text") or "")
+
+    def _note_label(r):
+        if r["status"] == "reply":
+            return r["reply"] or ""
+        code = core.classify_note(r.get("status"), r.get("http_code"),
+                                  r.get("error"))
+        return _t(T, "note_" + (code or "error"), "") or _short(
+            core.note_text(r.get("error")), 120) or (r.get("error") or "")
+
+    # dead rows sink to the bottom of the main table: the report reads as
+    # "everything is fine" first, then "here is the junk it found"
+    results = sorted(results, key=lambda r: (1 if _is_dead(r) else 0))
     rows = []
     for r in results:
-        note = r["reply"] if r["status"] == "reply" else (r.get("error") or "")
+        note = _note_label(r)
         note_cls = "note" if r["status"] == "reply" else (
             "note reason" if r["status"] == "empty" else "note err")
         code = r.get("http_code") if r.get("http_code") else "-"
+        badge = (' <span class="badge-dead" title="%s">%s</span>'
+                 % (_esc(_reason(r)), _esc(_t(T, "dead_word", "dead")))
+                 ) if _is_dead(r) else ""
         rows.append(
-            "<tr>"
-            '<td><span class="pill %s">%s</span></td>'
+            "<tr%s>"
+            '<td><span class="pill %s">%s</span>%s</td>'
             '<td class="mono">%s</td>'
             '<td class="mono">%s</td>'
             '<td class="num">%s</td>'
             '<td class="num">%s</td>'
             '<td class="%s">%s</td>'
             "</tr>" % (
-                _esc(r["status"]), _esc(st_label.get(r["status"], "?")),
+                ' class="dead"' if _is_dead(r) else "",
+                _esc(r["status"]), _esc(st_label.get(r["status"], "?")), badge,
                 _esc(r["model"]), _esc(r["host"]),
                 _esc(r.get("ms", "")), _esc(code),
                 note_cls, _esc(_short(note)),
@@ -145,6 +210,18 @@ def render(results, meta, T=None):
                 _esc(_t(T, "col_host", "host")), _esc(_t(T, "col_ms", "ms")),
                 _esc(_t(T, "col_http", "http")), _esc(_t(T, "col_note", "note")),
                 "".join(rows)))
+
+    # a separate section for models the user has written off, so the reason and
+    # the "this is junk" verdict survive after the console closes
+    dead = [r for r in results if _is_dead(r)]
+    hidden = meta.get("hidden") or []
+    sections = ""
+    if dead:
+        sections += _section(
+            _t(T, "dead_section", "written off (dead)"), dead, T, False)
+    if hidden:
+        sections += _section(
+            _t(T, "hidden_section", "hidden by you"), hidden, T, True)
 
     when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(meta.get("ts") or time.time()))
     return """<!DOCTYPE html>
@@ -180,6 +257,7 @@ def render(results, meta, T=None):
   <div class="card"><div class="k">%(c_total)s</div><div class="v">%(n_total)d</div></div>
 </section>
 %(body)s
+%(sections)s
 <footer>
   <span>%(legend)s</span>
   <span class="sep">|</span>
@@ -219,6 +297,7 @@ def render(results, meta, T=None):
         "c_total": _esc(_t(T, "card_total", "total")),
         "n_total": summary["total"],
         "body": body,
+        "sections": sections,
         "legend": _esc(_t(T, "legend", "")),
         "report_file": _esc(_t(T, "report_file", "report file")),
         "report_path": _esc(meta.get("report_name") or ""),

@@ -37,7 +37,8 @@ def log(msg):
 def ping_mode(targets, timeout):
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         results = list(pool.map(
-            lambda t: core.probe(t, timeout=timeout, max_tokens=16), targets))
+            lambda t: core.probe(t, timeout=timeout,
+                                 max_tokens=core.DEFAULT_MAX_TOKENS), targets))
     rank = {"reply": 0, "empty": 1, "fail": 2}
     results.sort(key=lambda r: (rank.get(r["status"], 3), r["host"], r["model"]))
     return results

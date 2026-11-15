@@ -38,7 +38,7 @@
       <span class="unit" data-i18n="seconds"></span>
     </label>
     <label><span data-i18n="max_tokens"></span>
-      <input id="maxtok" type="number" min="1" step="1" value="16">
+      <input id="maxtok" type="number" min="1" step="1" value="4096">
     </label>
     <button id="saveset" class="ghost" data-i18n="save"></button>
     <button id="runnow" class="primary" data-i18n="scan_now"></button>
@@ -77,13 +77,26 @@
   <div id="srclist" class="src-list hidden"></div>
 </section>
 
+<section class="finder">
+  <div class="find-head">
+    <span data-i18n="find_title"></span>
+    <input id="findq" type="search" placeholder="">
+    <label class="deepbox"><input type="checkbox" id="findmeta"> <span data-i18n="find_meta"></span></label>
+    <button id="findgo" class="ghost" data-i18n="find_go"></button>
+    <span class="status" id="findstate"></span>
+  </div>
+  <div id="findlist" class="find-list hidden"></div>
+</section>
+
 <section class="bar">
   <input id="filter" type="search">
   <div class="chips" id="chips">
     <button data-f="all" class="chip on" data-i18n="chip_all"></button>
+    <button data-f="dead" class="chip" data-i18n="chip_dead"></button>
     <button data-f="reply" class="chip" data-i18n="chip_reply"></button>
     <button data-f="empty" class="chip" data-i18n="chip_empty"></button>
     <button data-f="fail" class="chip" data-i18n="chip_fail"></button>
+    <button data-f="hidden" class="chip" data-i18n="chip_hidden"></button>
   </div>
   <span class="status" id="scanstate"></span>
 </section>
@@ -99,6 +112,7 @@
       <th data-sort="uptime" data-i18n="col_uptime"></th>
       <th data-sort="history" data-i18n="col_spark"></th>
       <th data-sort="note" data-i18n="col_note"></th>
+      <th class="act" data-i18n="col_act"></th>
     </tr>
   </thead>
   <tbody id="rows"></tbody>

@@ -1,8 +1,8 @@
 # ModelPulse
 
-**In plain words:** your agent is connected to a long list of models. ModelPulse tells you which of
-them are actually answering right now — and which are down — so you can switch before you hit an
-error.
+**In plain words:** you connected a bunch of custom models to your agent (your own providers, your
+own API keys). ModelPulse tells you which of them are actually answering right now — and which are
+down — so you can switch before you hit an error.
 
 Model availability monitor for your AI agent's BYOK providers, with an on-demand MCP tool, a web
 dashboard, and a one-shot HTML report.
@@ -14,6 +14,14 @@ dashboard, and a one-shot HTML report.
 ## English
 
 ### What it is
+
+**In one sentence:** it sends each of your models a tiny real request and shows which ones answer,
+so you stop guessing.
+
+This is about **your own (custom) providers** — the ones you added yourself with an API key, not the
+built-in models the agent ships with. Those stock models are usually already flagged as available;
+the ones you wired up on your own are the ones that quietly go down, and nothing tells you. That is
+what ModelPulse checks.
 
 Your agent keeps its connected providers and models in a settings file — by default
 `~/.qoder/settings.json` → `providers`.
@@ -72,7 +80,7 @@ On Windows, double-click `once.cmd` / `start.cmd` instead.
 {
   "settings_path": "",
   "interval_seconds": 900,
-  "max_tokens": 16,
+  "max_tokens": 4096,
   "timeout_seconds": 30,
   "workers": 8,
   "language": "ru",
@@ -85,6 +93,8 @@ On Windows, double-click `once.cmd` / `start.cmd` instead.
 - `browser` — what opens the report: a full `.exe` path **or** the words
   `firefox` / `chrome` / `edge`. Empty = the Windows default browser.
 - `workers` — how many models to probe in parallel.
+- `max_tokens` — reply budget for the probe. Reasoning models spend tokens thinking before they
+  emit text, so a small value makes them look dead: keep it generous (4096 by default).
 
 The browser is chosen in this order: `MODELPULSE_BROWSER` env → `config.json → browser` →
 the Windows default browser (from the registry) → known install paths (Chrome, Edge, Brave,
@@ -150,10 +160,18 @@ no reports, no DB, no logs, no disk. The server binds to `127.0.0.1` only.
 
 ## Русский
 
-**Простыми словами:** у агента подключён длинный список моделей. ModelPulse показывает, какие из
-них реально отвечают **сейчас**, а какие лежат — чтобы переключиться до того, как получишь ошибку.
+**Простыми словами:** ты подключил к агенту кучу своих моделей (свои провайдеры, свои ключи).
+ModelPulse показывает, какие из них реально отвечают **сейчас**, а какие лежат — чтобы
+переключиться до того, как получишь ошибку.
 
 ### Что это
+
+**Одной фразой:** шлёт каждой твоей модели крошечный настоящий запрос и показывает, кто ответил —
+чтобы не гадать.
+
+Речь про **твои собственные (кастомные) провайдеры** — те, что ты подключил сам, с ключом. Не про
+штатные модели агента: они обычно и так помечены как доступные. А вот твои собственные тихо ложатся,
+и никто об этом не сообщает. Именно их ModelPulse и проверяет.
 
 Агент хранит подключённые тобой провайдеры и модели в своём файле настроек — по умолчанию это
 `~/.qoder/settings.json` → `providers`.
@@ -219,7 +237,7 @@ python server.py --port 8765 --interval 900
 {
   "settings_path": "",
   "interval_seconds": 900,
-  "max_tokens": 16,
+  "max_tokens": 4096,
   "timeout_seconds": 30,
   "workers": 8,
   "language": "ru",
@@ -232,6 +250,8 @@ python server.py --port 8765 --interval 900
 - `browser` — чем открывать отчёт: полный путь к `.exe` **или** слово
   `firefox` / `chrome` / `edge`. Пусто = браузер по умолчанию Windows.
 - `workers` — сколько моделей проверять параллельно.
+- `max_tokens` — бюджет ответа на прозвон. Reasoning-модели тратят токены на размышление до
+  текста, поэтому маленькое значение делает их «мёртвыми»: держи запас (по умолчанию 4096).
 
 Браузер выбирается по порядку: переменная `MODELPULSE_BROWSER` → `config.json → browser` →
 браузер по умолчанию Windows (из реестра) → известные пути (Chrome, Edge, Brave, Vivaldi,

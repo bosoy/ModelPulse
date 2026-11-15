@@ -44,6 +44,7 @@ function applyI18n() {
     if (T[k]) el.textContent = T[k];
   });
   $("#filter").placeholder = t("filter_ph", "filter");
+  $("#findq").placeholder = t("find_ph", "model id, e.g. glm-5.3-flash");
   $("#setpath").placeholder = t("settings_path_ph", "");
   $("#d-close").textContent = t("close", "close");
   document.querySelectorAll("#lang button").forEach((b) => {
@@ -135,13 +136,43 @@ function esc(s) {
 
 function note(r) {
   if (r.status === "reply") return `<span class="note mono">${esc(r.reply || "")}</span>`;
-  if (r.status === "empty") return `<span class="note reason">${esc(r.error || "no text")}</span>`;
-  const code = r.http_code ? "HTTP " + r.http_code + " " : "";
-  return `<span class="note err">${code}${esc(r.error || "")}</span>`;
+  const code = r.note_code || (r.status === "empty" ? "empty" : "error");
+  const label = t("note_" + code, "");
+  const raw = r.note_text || r.error || "";
+  const title = raw ? esc(label ? label + " - " + raw : raw) : esc(label || code);
+  return `<span class="note ${r.status === "empty" ? "reason" : "err"}" title="${title}">`
+    + esc(label || raw || code) + `</span>`;
+}
+
+// reason texts live in the lang pack under dead_<code>; fall back to server text
+function reasonText(r) {
+  return t("dead_" + (r.reason_code || ""), r.reason_text || "") || "";
+}
+
+function deadBadge(r) {
+  if (!r.dead) return "";
+  const txt = reasonText(r);
+  return `<span class="badge-dead" title="${esc(txt)}">${t("dead_word", "dead")}</span>`;
+}
+
+function actBtn(r) {
+  const hide = r.hidden
+    ? `<button class="act ghost unhide" data-act="unhide">${t("unhide", "restore")}</button>`
+    : `<button class="act ghost hide" data-act="hide">${t("hide", "hide")}</button>`;
+  const del = r.provider_id
+    ? `<button class="act ghost del" data-act="del">${t("del_word", "delete")}</button>`
+    : "";
+  return hide + del;
 }
 
 function passes(r) {
-  if (FILTER !== "all" && r.status !== FILTER) return false;
+  if (FILTER === "hidden") {
+    if (!r.hidden) return false;
+  } else {
+    if (r.hidden) return false;          // muted rows leave the normal list
+    if (FILTER === "dead" && !r.dead) return false;
+    if (FILTER !== "all" && FILTER !== "dead" && r.status !== FILTER) return false;
+  }
   if (QUERY) {
     const hay = (r.model + " " + r.host + " " + (r.provider_id || "")).toLowerCase();
     if (!hay.includes(QUERY)) return false;
@@ -154,6 +185,7 @@ const RANK = { reply: 0, empty: 1, fail: 2 };
 function sortValue(r, k) {
   switch (k) {
     case "status": return RANK[r.status] ?? 3;
+    case "dead": return (r.hidden ? 2 : 0) + (r.dead ? 1 : 0);
     case "uptime": {
       const u = r.uptime_24h;
       return u ? u.reply_pct : -1;
@@ -163,7 +195,9 @@ function sortValue(r, k) {
       return h.reduce((s, x) => s + (x.status === "reply" ? 1 : 0), 0);
     }
     case "note":
-      return String((r.status === "reply" ? r.reply : r.error) || "").toLowerCase();
+      if (r.status === "reply") return String(r.reply || "").toLowerCase();
+      return String(t("note_" + (r.note_code || "error"), "")
+        || r.note_text || r.error || "").toLowerCase();
     case "http_code": return r.http_code == null ? -1 : r.http_code;
     case "ms": return r.ms == null ? -1 : r.ms;
     default: return r[k];
@@ -196,8 +230,10 @@ function render() {
   const rows = MODELS.filter(passes).sort(cmp);
   $("#rows").innerHTML = rows.map((r) => {
     const u24 = r.uptime_24h, u1 = r.uptime_1h;
-    return `<tr class="clickable" data-model="${esc(r.model)}" data-host="${esc(r.host)}">
-      <td>${pill(r.status)}</td>
+    const cls = ["clickable", r.hidden ? "muted" : "", r.dead ? "dead" : ""]
+      .filter(Boolean).join(" ");
+    return `<tr class="${cls}" data-model="${esc(r.model)}" data-host="${esc(r.host)}">
+      <td><div class="stcell">${pill(r.status)}${deadBadge(r)}</div></td>
       <td class="mono">${esc(r.model)}</td>
       <td class="note">${esc(r.host)}</td>
       <td class="num">${fmtMs(r.ms)}</td>
@@ -205,13 +241,160 @@ function render() {
       <td>${u1 ? upBar(u1) : "-"} <span class="note">/</span> ${u24 ? upBar(u24) : "-"}</td>
       <td>${spark(r.history)}</td>
       <td>${note(r)}</td>
+      <td class="act">${actBtn(r)}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="8" class="note">${t("nothing", "nothing")}</td></tr>`;
+  }).join("") || `<tr><td colspan="9" class="note">${t("nothing", "nothing")}</td></tr>`;
 
   markSort();
   document.querySelectorAll("tr[data-model]").forEach((tr) => {
     tr.onclick = () => openDrawer(tr.dataset.model, tr.dataset.host);
+    tr.querySelectorAll(".act button").forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        const r = MODELS.find((m) => m.model === tr.dataset.model
+          && m.host === tr.dataset.host);
+        if (!r) return;
+        if (b.dataset.act === "del") deleteFromAgent(r);
+        else toggleHidden(r);
+      };
+    });
   });
+}
+
+function findRow(h) {
+  const editable = h.editable;
+  const role = h.role === "default" ? t("find_role_default", "default")
+    : t("find_role_list", "in list");
+  const alias = h.alias ? ` <span class="note">(${esc(h.alias)})</span>` : "";
+  const acts = editable
+    ? `<button class="act ghost copy" data-copy="${esc(h.how)}">${t("find_copy", "copy address")}</button>
+       <button class="act ghost del" data-del="1">${t("del_word", "delete")}</button>`
+    : `<span class="tag ro">${t("find_readonly", "metadata")}</span>`;
+  return `<div class="find-row ${editable ? "" : "noread"}" data-idx="${h.__i}">
+    <div class="find-main">
+      <div class="find-top">
+        <span class="fagent">${esc(h.agent)}</span>
+        <span class="fmodel">${esc(h.model)}</span>${alias}
+        <span class="note">${role}</span>
+      </div>
+      <div class="find-bot">
+        <span class="fhow ${editable ? "" : "meta"}">${esc(h.how || "-")}</span>
+        <span class="fpath" title="${esc(h.path)}">${esc(h.path)}</span>
+      </div>
+    </div>
+    <div class="acts">${acts}</div>
+  </div>`;
+}
+
+let FIND_HITS = [];
+
+function renderFind(hits, query) {
+  const list = $("#findlist");
+  FIND_HITS = hits;
+  hits.forEach((h, i) => { h.__i = i; });
+  if (!query) { list.classList.add("hidden"); list.innerHTML = ""; return; }
+  list.classList.remove("hidden");
+  if (!hits.length) {
+    list.innerHTML = `<div class="find-note">${t("find_none", "not found in any config")}</div>`;
+    return;
+  }
+  list.innerHTML = hits.map(findRow).join("");
+  list.querySelectorAll(".find-row").forEach((row) => {
+    const h = FIND_HITS[Number(row.dataset.idx)];
+    const cp = row.querySelector("[data-copy]");
+    if (cp) cp.onclick = (e) => {
+      e.stopPropagation();
+      navigator.clipboard && navigator.clipboard.writeText(h.how);
+      $("#findstate").textContent = t("find_copied", "address copied");
+      setTimeout(() => { $("#findstate").textContent = ""; }, 1500);
+    };
+    const dl = row.querySelector("[data-del]");
+    if (dl) dl.onclick = (e) => { e.stopPropagation(); deleteFound(h); };
+  });
+}
+
+async function runFind() {
+  const q = $("#findq").value.trim();
+  if (!q) { renderFind([], ""); return; }
+  const meta = $("#findmeta").checked ? "1" : "0";
+  $("#findstate").textContent = t("state_scanning", "searching...");
+  try {
+    const j = await (await fetch(`/api/find-model?q=${encodeURIComponent(q)}&meta=${meta}`,
+      { cache: "no-store" })).json();
+    $("#findstate").textContent =
+      `${j.count} ${t("find_hits", "places")}`;
+    renderFind(j.hits || [], q);
+  } catch (e) {
+    $("#findstate").textContent = String(e);
+  }
+}
+
+// delete one found occurrence - only ever after the client approves the
+// exact spot shown in the row; never a bulk or silent edit
+async function deleteFound(h) {
+  const msg = t("find_confirm", "Delete this model from the agent's config?")
+    + "\n\n" + h.agent + "  -  " + h.model
+    + "\n" + t("find_confirm_where", "file:") + " " + h.path
+    + "\n" + t("find_confirm_addr", "address:") + " " + (h.how || "-")
+    + "\n\n" + t("confirm_delete_note", "A backup is kept; history stays.");
+  if (!window.confirm(msg)) return;
+  let j = {};
+  try {
+    const res = await fetch("/api/delete-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: h.model, provider_id: h.provider_id,
+        source_id: h.source_id || "", host: h.host || "" }),
+    });
+    j = await res.json();
+  } catch (e) { j = { ok: false, error: String(e) }; }
+  if (!j.ok) { window.alert(t("delete_failed", "delete failed") + ": " + (j.error || "")); return; }
+  $("#findstate").textContent = t("find_deleted", "deleted")
+    + (j.backup ? "  (" + t("find_backup", "backup") + ")" : "");
+  runFind();
+  refresh();
+}
+
+async function toggleHidden(r) {
+  const goHide = !r.hidden;
+  if (goHide) {
+    const msg = r.dead
+      ? t("confirm_hide_dead", "Hide this model?") + "\n\n" + reasonText(r)
+      : t("confirm_hide", "Hide this model from the list?");
+    if (!window.confirm(msg)) return;
+  }
+  const url = goHide ? "/api/hide" : "/api/unhide";
+  const body = { model: r.model, host: r.host };
+  if (goHide) {
+    body.reason_code = r.reason_code || "";
+    body.reason_text = r.reason_text || "";
+    body.provider_id = r.provider_id || "";
+  }
+  await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  await loadModels();
+}
+
+async function deleteFromAgent(r) {
+  const msg = t("confirm_delete", "Delete this model from the agent's list?")
+    + "\n\n" + r.model + "  @" + r.host
+    + "\n" + t("confirm_delete_note", "A backup of settings.json is kept; history stays.");
+  if (!window.confirm(msg)) return;
+  let j = {};
+  try {
+    const res = await fetch("/api/delete-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: r.model, host: r.host, provider_id: r.provider_id }),
+    });
+    j = await res.json();
+  } catch (e) { j = { ok: false, error: String(e) }; }
+  if (!j.ok) { window.alert(t("delete_failed", "delete failed") + ": " + (j.error || "")); return; }
+  await loadModels();
+  await loadSources();
 }
 
 async function loadModels() {
@@ -404,7 +587,7 @@ async function loadConfig() {
   const j = await (await fetch("/api/config")).json();
   PATHCFG = j;
   $("#setpath").value = j.override || "";
-  $("#maxtok").value = (j.config && j.config.max_tokens) || 16;
+  $("#maxtok").value = (j.config && j.config.max_tokens) || 4096;
   $("#setpath").placeholder = t("settings_path_ph", j.default_path || "");
 }
 
@@ -438,7 +621,8 @@ async function openDrawer(model, host) {
         <span>${t("no_data", "no data")}</span></div>`;
   const rows = (j.probes || []).map((p) => {
     const detail = p.status === "reply" ? esc(p.reply || "")
-      : esc(p.error || "HTTP " + (p.http_code || "?"));
+      : esc(t("note_" + (p.note_code || "error"), "") || p.note_text
+        || p.error || "HTTP " + (p.http_code || "?"));
     return `<div class="drow"><span class="t">${fmtDate(p.ts)}</span>
       <span>${pill(p.status)} ${fmtMs(p.ms)} ${detail}</span></div>`;
   }).join("");
@@ -506,6 +690,10 @@ $("#filter").oninput = (e) => {
   QUERY = e.target.value.trim().toLowerCase();
   render();
 };
+
+$("#findgo").onclick = () => runFind();
+$("#findq").onkeydown = (e) => { if (e.key === "Enter") runFind(); };
+$("#findmeta").onchange = () => { if ($("#findq").value.trim()) runFind(); };
 
 document.querySelectorAll(".chip").forEach((c) => {
   c.onclick = () => {
