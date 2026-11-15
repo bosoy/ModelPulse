@@ -43,15 +43,20 @@ CANCEL = threading.Event()
 
 
 def do_scan(trigger):
-    """Run one full scan and persist it. Serialized so scans never overlap."""
+    """Run one full scan and persist it. Serialized so scans never overlap.
+
+    A cancelled pass is dropped entirely: no run row and no probe rows are
+    written, so partial results never reach history or uptime statistics.
+    """
     if not RUN_LOCK.acquire(blocking=False):
         return None, "scan already running"
     CANCEL.clear()
     try:
         with STATE_LOCK:
             STATE["scanning"] = True
-            STATE["last_scan_started"] = time.time()
             STATE["last_cancelled"] = False
+            started_at = time.time()
+            STATE["last_scan_started"] = started_at
             active = STATE["active_source"]
             deep = STATE["deep_scan"]
             override = (STATE.get("settings_override") or "").strip()
@@ -68,15 +73,17 @@ def do_scan(trigger):
             STATE["provider_count"] = len({t["provider_id"] for t in targets})
             STATE["model_count"] = len(targets)
             STATE["last_error"] = None
-        run_id = STORE.start_run(path, trigger)
         results = core.scan(targets, timeout=STATE["timeout"],
                             max_tokens=STATE["max_tokens"],
                             should_stop=CANCEL.is_set)
         cancelled = CANCEL.is_set()
-        if results:
-            STORE.add_probes(run_id, results)
         summary = core.summarize(results)
-        STORE.finish_run(run_id, summary, cancelled=cancelled)
+        run_id = None
+        if not cancelled:
+            run_id = STORE.start_run(path, trigger, started_at=started_at)
+            if results:
+                STORE.add_probes(run_id, results)
+            STORE.finish_run(run_id, summary)
         with STATE_LOCK:
             STATE["last_scan_finished"] = time.time()
             STATE["scanning"] = False

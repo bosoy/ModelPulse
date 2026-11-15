@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS runs (
     replied     INTEGER DEFAULT 0,
     empty       INTEGER DEFAULT 0,
     failed      INTEGER DEFAULT 0,
-    cancelled   INTEGER DEFAULT 0,
     source      TEXT,
     trigger     TEXT
 );
@@ -50,36 +49,23 @@ class Store(object):
         with self._lock:
             self._conn.executescript(SCHEMA)
             self._conn.commit()
-            self._migrate()
-
-    def _migrate(self):
-        """Add columns introduced after the first release."""
-        try:
-            cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(runs)")}
-            if "cancelled" not in cols:
-                self._conn.execute(
-                    "ALTER TABLE runs ADD COLUMN cancelled INTEGER DEFAULT 0")
-                self._conn.commit()
-        except Exception:
-            pass
 
     # -- writes ---------------------------------------------------------
-    def start_run(self, source, trigger):
+    def start_run(self, source, trigger, started_at=None):
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO runs (started_at, source, trigger) VALUES (?,?,?)",
-                (time.time(), source, trigger))
+                (started_at or time.time(), source, trigger))
             self._conn.commit()
             return cur.lastrowid
 
-    def finish_run(self, run_id, summary, cancelled=False):
+    def finish_run(self, run_id, summary):
         with self._lock:
             self._conn.execute(
-                "UPDATE runs SET finished_at=?, total=?, replied=?, empty=?, failed=?, "
-                "cancelled=? WHERE id=?",
+                "UPDATE runs SET finished_at=?, total=?, replied=?, empty=?, failed=? "
+                "WHERE id=?",
                 (time.time(), summary["total"], summary["replied"],
-                 summary["empty"], summary["failed"],
-                 1 if cancelled else 0, run_id))
+                 summary["empty"], summary["failed"], run_id))
             self._conn.commit()
 
     def add_probes(self, run_id, results):

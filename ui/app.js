@@ -205,11 +205,13 @@ function setCards(last) {
 let SCANNING = false;
 let SCAN_HOLD = 0;
 let CANCELLING = false;
+let CANCELLED_SHOWN = false;
 
 function setScanning(on, sub) {
   const ov = $("#scan-overlay");
   if (!ov) return;
   if (on) {
+    CANCELLED_SHOWN = false;
     $("#scan-sub").textContent = sub || "";
     $("#scan-hint").textContent = t("cancel_hint", "Esc");
     const cb = $("#scan-cancel");
@@ -245,7 +247,6 @@ async function loadSource() {
   const j = await (await fetch("/api/source")).json();
   const now = Date.now();
   const show = !!j.scanning || now < SCAN_HOLD;
-  const wasScanning = SCANNING;
   SCANNING = show;
   setScanning(show, scanSub(j));
   $("#c-source").textContent = j.path || "-";
@@ -257,9 +258,11 @@ async function loadSource() {
   dot.className = "dot " + (j.scanning ? "busy" : "live");
   if (j.scanning) {
     $("#scanstate").textContent = t("state_scanning", "scanning...");
-  } else if (j.last_cancelled && wasScanning) {
+  } else if (j.last_cancelled && !CANCELLED_SHOWN) {
+    CANCELLED_SHOWN = true;
     $("#scanstate").textContent = t("cancelled", "cancelled");
-  } else {
+    setTimeout(() => { CANCELLED_SHOWN = false; }, 5000);
+  } else if (!CANCELLED_SHOWN) {
     $("#scanstate").textContent = j.last_error
       ? t("state_error", "error") + ": " + j.last_error
       : t("state_idle", "idle");
