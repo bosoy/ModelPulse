@@ -1,9 +1,139 @@
 # ModelPulse
 
-Монитор доступности моделей для Qoder (и любого клиента, который держит BYOK-провайдеров
-в `~/.qoder/settings.json`).
 Model availability monitor for Qoder BYOK providers, with an on-demand MCP tool, a web
 dashboard, and a one-shot HTML report.
+
+![ModelPulse results table](docs/screenshot-table.png)
+
+---
+
+## English
+
+### What it is
+
+Qoder keeps your connected providers and models in `~/.qoder/settings.json` → `providers`.
+ModelPulse reads **the same file** and actively probes every model with a `chat/completions`
+request ("reply with one word: pong"), verifying that **real answer text** came back, not just
+HTTP 200. No IPC, no plugin — the shared registry file is the whole integration contract.
+
+Statuses:
+
+- **REPLY** — text came back (`pong`);
+- **EMPTY** — 200 but no content (reasoning only / empty `content`);
+- **FAIL** — network/HTTP error (403, 404, 429, timeout, ...).
+
+### Modes
+
+1. **One-shot run** — `once.cmd`. Probes every model, writes an HTML report and **opens it in a
+   separate browser window**; the console window may be closed — the report stays on disk.
+2. **Web monitor** — `start.cmd` runs a local server (`127.0.0.1:8765`) with a dashboard: cards,
+   filter, per-model history, 1h/24h uptime, interval re-scan. A running check can be aborted
+   with **Esc** or the "Cancel" button; a cancelled pass is dropped entirely and never reaches
+   history or statistics.
+3. **MCP tool** — `mcp_server.py` exposes a tool the agent can call to run the same pass on demand.
+
+### Interface language
+
+The dashboard and the report are bilingual: **RU / EN**. Toggle via the `RU | EN` segment in the
+top-right corner of the dashboard; the choice is stored in `config.json → language` and applies to
+the next `once.py` report. One-off override: `python once.py --lang en`.
+
+### Requirements
+
+- Python 3.10+ (tested on 3.14, Windows and Linux).
+- Nothing else: HTTP via stdlib `urllib`, storage via stdlib `sqlite3`.
+
+### Quick start
+
+```bash
+python once.py                 # one pass + report in the browser
+python once.py --filter groq   # only matching models
+python once.py --no-open       # render the report, do not launch a browser
+python server.py --port 8765   # web monitor at http://127.0.0.1:8765
+```
+
+On Windows, double-click `once.cmd` / `start.cmd` instead.
+
+### Configuration
+
+`config.json` next to the scripts:
+
+```json
+{
+  "settings_path": "",
+  "interval_seconds": 900,
+  "max_tokens": 16,
+  "timeout_seconds": 30,
+  "workers": 8,
+  "language": "ru",
+  "browser": ""
+}
+```
+
+- `settings_path` — path to the settings file; empty = `~/.qoder/settings.json`.
+- `browser` — what opens the report: a full `.exe` path **or** the words
+  `firefox` / `chrome` / `edge`. Empty = the Windows default browser.
+- `workers` — how many models to probe in parallel.
+
+The browser is chosen in this order: `MODELPULSE_BROWSER` env → `config.json → browser` →
+the Windows default browser (from the registry) → known install paths (Chrome, Edge, Brave,
+Vivaldi, Opera, Yandex, Firefox) → the `.html` association. **Chrome is not required.**
+
+### Reports
+
+`data/reports/` gets `report-<timestamp>.html` per run plus `last-run.html` (always the newest);
+the 50 latest are kept, older ones are pruned automatically. `data/last-run.txt` holds the same
+table as text. Each report is self-contained: inline CSS, no server, opens on a double-click.
+
+### Sources: agents on this machine
+
+ModelPulse can find **other agents and clients** installed on the PC and pull models from them.
+There is a "Sources" tab in the dashboard and a console command:
+
+```bash
+python once.py --list-sources          # agents found on this PC
+python once.py --list-sources --deep   # plus a profile walk
+python once.py --source zcode          # one pass against the chosen agent
+```
+
+**The user picks which agent to work with**: click an agent row in the panel to make it active, and
+"Check now" runs against its models. The choice is saved to `config.json` (`active_source`) and
+survives restarts.
+
+Known-agent catalog: Qoder, zcode, Codex CLI, free-claude-code, Cline, Claude Code, Gemini CLI,
+Copilot CLI, LM Studio, Ollama, Continue, Aider. Deep scan (`--deep`, or the checkbox in the panel)
+also walks the profile and recognises unknown configs by their providers/models shape.
+
+Sources come in three kinds: **agent** (a real client you use; some are probeable), **catalog**
+(a model list shipped with an agent), and **registry** (metadata such as `~/.cache/kilo/models.json`
+- not your config, shown as reference only and never probed).
+
+**Security.** The inventory **never shows key values** - only a `has_key` flag and its length. Keys
+are read into memory only at probe time and never written. The walk is bounded (depth 5, up to
+40000 files, a size cap, pruned caches/system dirs) - not a full-disk crawl.
+
+### MCP connector
+
+Add a stdio server under `mcpServers` in `~/.qoder/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "models-ping": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["<path>/mcp_server.py"]
+    }
+  }
+}
+```
+
+Tools: `models_providers` (list targets) and `models_status` (run a pass + summary).
+
+### Privacy
+
+API keys are read from your `settings.json` into memory and are **never written anywhere** —
+no reports, no DB, no logs, no disk. The server binds to `127.0.0.1` only.
 
 ---
 
@@ -28,8 +158,8 @@ ModelPulse читает **тот же файл** и активно прозва�
    отдельным окном браузера**; окно консоли можно закрыть — отчёт остаётся на диске.
 2. **Веб-монитор** — `start.cmd` поднимает локальный сервер (`127.0.0.1:8765`) с дашбордом:
    карточки, фильтр, история по каждой модели, доступность за 1ч/24ч, автоопрос по интервалу.
-   Идущую проверку можно прервать: **Esc** или кнопка «Отменить»; отменённый прогон сохраняется
-   в истории с пометкой.
+   Идущую проверку можно прервать: **Esc** или кнопка «Отменить». Отменённый прогон отбрасывается
+   целиком — в историю и статистику он не попадает.
 3. **MCP-тул** — `mcp_server.py` отдаёт инструмент агенту, который по запросу делает тот же прогон.
 
 ### Язык интерфейса
@@ -151,102 +281,6 @@ Gemini CLI, Copilot CLI, LM Studio, Ollama, Continue, Aider. Глубокий п
 
 Ключи читаются из твоего `settings.json` в память и **никуда не пишутся**: ни в отчёты,
 ни в БД, ни в логи, ни на диск. Сервер слушает только `127.0.0.1`.
-
----
-
-## English
-
-### What it is
-
-Qoder keeps your connected providers and models in `~/.qoder/settings.json` → `providers`.
-ModelPulse reads **the same file** and actively probes every model with a `chat/completions`
-request ("reply with one word: pong"), verifying that **real answer text** came back, not just
-HTTP 200. No IPC, no plugin — the shared registry file is the whole integration contract.
-
-Statuses:
-
-- **REPLY** — text came back (`pong`);
-- **EMPTY** — 200 but no content (reasoning only / empty `content`);
-- **FAIL** — network/HTTP error (403, 404, 429, timeout, ...).
-
-### Modes
-
-1. **One-shot run** — `once.cmd`. Probes every model, writes an HTML report and **opens it in a
-   separate browser window**; the console window may be closed — the report stays on disk.
-2. **Web monitor** — `start.cmd` runs a local server (`127.0.0.1:8765`) with a dashboard: cards,
-   filter, per-model history, 1h/24h uptime, interval re-scan. A running check can be aborted:
-   **Esc** or the "Cancel" button; the cancelled run is kept in history with a flag.
-3. **MCP tool** — `mcp_server.py` exposes a tool the agent can call to run the same pass on demand.
-
-### Interface language
-
-The dashboard and the report are bilingual: **RU / EN**. Toggle via the `RU | EN` segment in the
-top-right corner of the dashboard; the choice is stored in `config.json → language` and applies to
-the next `once.py` report. One-off override: `python once.py --lang en`.
-
-### Requirements
-
-- Python 3.10+ (tested on 3.14, Windows and Linux).
-- Nothing else: HTTP via stdlib `urllib`, storage via stdlib `sqlite3`.
-
-### Quick start
-
-```bash
-python once.py                 # one pass + report in the browser
-python once.py --filter groq   # only matching models
-python once.py --no-open       # render the report, do not launch a browser
-python server.py --port 8765   # web monitor at http://127.0.0.1:8765
-```
-
-On Windows, double-click `once.cmd` / `start.cmd` instead.
-
-### Configuration
-
-`config.json` next to the scripts — see the Russian section for every key. The browser is chosen
-in this order: `MODELPULSE_BROWSER` env → `config.json → browser` → the Windows default browser
-(from the registry) → known install paths → the `.html` association. **Chrome is not required.**
-
-### Reports
-
-`data/reports/` gets `report-<timestamp>.html` per run plus `last-run.html` (always the newest);
-the 50 latest are kept. Each report is self-contained (inline CSS, no server).
-
-### Sources: agents on this machine
-
-ModelPulse can find **other agents and clients** installed on the PC and pull models from them.
-There is a "Sources" tab in the dashboard and a console command:
-
-```bash
-python once.py --list-sources          # agents found on this PC
-python once.py --list-sources --deep   # plus a profile walk
-python once.py --source zcode          # one pass against the chosen agent
-```
-
-**The user picks which agent to work with**: click an agent row in the panel to make it active, and
-"Check now" runs against its models. The choice is saved to `config.json` (`active_source`) and
-survives restarts.
-
-Known-agent catalog: Qoder, zcode, Codex CLI, free-claude-code, Cline, Claude Code, Gemini CLI,
-Copilot CLI, LM Studio, Ollama, Continue, Aider. Deep scan (`--deep`, or the checkbox in the panel)
-also walks the profile and recognises unknown configs by their providers/models shape.
-
-Sources come in three kinds: **agent** (a real client you use; some are probeable), **catalog**
-(a model list shipped with an agent), and **registry** (metadata such as `~/.cache/kilo/models.json`
-- not your config, shown as reference only and never probed).
-
-**Security.** The inventory **never shows key values** - only a has_key flag and its length. Keys
-are read into memory only at probe time and never written. The walk is bounded (depth 5, up to
-40000 files, a size cap, pruned caches/system dirs) - not a full-disk crawl.
-
-### MCP connector
-
-Add a stdio server under `mcpServers` in `~/.qoder/settings.json`, pointing at `mcp_server.py`.
-Tools: `models_providers` and `models_status`.
-
-### Privacy
-
-API keys are read from your `settings.json` into memory and are **never written anywhere** —
-no reports, no DB, no logs, no disk. The server binds to `127.0.0.1` only.
 
 ---
 
