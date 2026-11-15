@@ -47,6 +47,7 @@ function applyI18n() {
   $("#findq").placeholder = t("find_ph", "model id, e.g. glm-5.3-flash");
   $("#setpath").placeholder = t("settings_path_ph", "");
   $("#d-close").textContent = t("close", "close");
+  setAuto(AUTO);
   document.querySelectorAll("#lang button").forEach((b) => {
     b.classList.toggle("on", b.dataset.lang === LANG);
   });
@@ -137,7 +138,11 @@ function esc(s) {
 function note(r) {
   if (r.status === "reply") return `<span class="note mono">${esc(r.reply || "")}</span>`;
   const code = r.note_code || (r.status === "empty" ? "empty" : "error");
-  const label = t("note_" + code, "");
+  let label = t("note_" + code, "");
+  if (code === "otpm" && r.tpm_limit) {
+    label = t("note_otpm_n", "output token cap {n}/min - long chat answers will fail")
+      .replace("{n}", r.tpm_limit);
+  }
   const raw = r.note_text || r.error || "";
   const title = raw ? esc(label ? label + " - " + raw : raw) : esc(label || code);
   return `<span class="note ${r.status === "empty" ? "reason" : "err"}" title="${title}">`
@@ -414,6 +419,18 @@ let SCANNING = false;
 let SCAN_HOLD = 0;
 let CANCELLING = false;
 let CANCELLED_SHOWN = false;
+let AUTO = false;
+
+function setAuto(on) {
+  AUTO = !!on;
+  const b = $("#autoscan");
+  if (!b) return;
+  b.classList.toggle("on", AUTO);
+  b.classList.toggle("primary", AUTO);
+  b.classList.toggle("ghost", !AUTO);
+  b.textContent = t(AUTO ? "auto_on" : "scan_auto", AUTO ? "continuous: on" : "continuous");
+  b.title = t("auto_hint", "");
+}
 
 function setScanning(on, sub) {
   const ov = $("#scan-overlay");
@@ -462,8 +479,9 @@ async function loadSource() {
     `${j.agent || "-"} - ${t("providers", "providers")}: ${j.providers} - ${t("models_word", "models")}: ${j.models}`
     + ` - ${t("reread", "reread")}: ${fmtDate(j.mtime)}`;
   $("#interval").value = j.interval;
+  setAuto(j.auto);
   const dot = $("#livedot");
-  dot.className = "dot " + (j.scanning ? "busy" : "live");
+  dot.className = "dot " + (j.scanning ? "busy" : (AUTO ? "auto" : "live"));
   if (j.scanning) {
     $("#scanstate").textContent = t("state_scanning", "scanning...");
   } else if (j.last_cancelled && !CANCELLED_SHOWN) {
@@ -473,9 +491,10 @@ async function loadSource() {
   } else if (!CANCELLED_SHOWN) {
     $("#scanstate").textContent = j.last_error
       ? t("state_error", "error") + ": " + j.last_error
-      : t("state_idle", "idle");
+      : (AUTO ? t("auto_waiting", "continuous on - waiting for the next pass")
+              : t("state_idle", "idle"));
   }
-  if (j.scanning) setTimeout(refresh, 1500);
+  if (j.scanning || AUTO) setTimeout(refresh, 1500);
   return j;
 }
 
@@ -606,6 +625,103 @@ function refresh() {
   loadSource();
   loadSummary();
   loadModels();
+  loadLinks();
+}
+
+// provider baseUrls that cannot serve chat: show the exact wrong address,
+// why it breaks chat, and the one-click fix - the client approves each edit
+async function loadLinks() {
+  let j = { issues: [] };
+  try { j = await (await fetch("/api/links")).json(); } catch (e) { /* stay quiet */ }
+  const issues = j.issues || [];
+  const sec = $("#linksec"), list = $("#linklist");
+  if (!sec || !list) return;
+  if (!issues.length) {
+    sec.classList.add("hidden");
+    list.innerHTML = "";
+    return;
+  }
+  sec.classList.remove("hidden");
+  $("#linkstate").textContent = issues.length + " " + t("links_found", "problems");
+  list.innerHTML = issues.map((i, n) => {
+    // a broken address that also duplicates a working provider is a delete,
+    // not a fix: repairing it would only recreate the same entry twice
+    const isDup = i.kind === "duplicate" || !!i.duplicate_of;
+    let why = t(isDup ? "links_why_dup" : "links_why_" + i.kind,
+      isDup ? "duplicate provider" : "wrong address");
+    if (isDup && i.kind !== "duplicate") {
+      why += " " + t("links_why_" + i.kind, "");
+    }
+    const fix = isDup
+      ? `<button class="act ghost del" data-drop="${n}">${t("links_drop", "delete duplicate")}</button>`
+      : `<button class="act ghost" data-fix="${n}">${t("links_fix", "fix address")}</button>`;
+    const arrow = isDup ? ""
+      : `<div class="link-new"><span class="lk">${t("links_should", "should be")}</span>
+           <code>${esc(i.suggested)}</code></div>`;
+    return `<div class="link-row" data-n="${n}">
+      <div class="link-top">
+        <span class="lkind">${esc(t(isDup ? "links_kind_duplicate" : "links_kind_" + i.kind, i.kind))}</span>
+        <span class="lmodels">${esc((i.models || []).join(", "))}</span>
+      </div>
+      <code class="link-old">${esc(i.base_url)}</code>
+      ${arrow}
+      <div class="link-why">${esc(why)}</div>
+      <div class="link-acts">${fix}
+        <button class="act ghost copy" data-copylink="${esc(i.base_url)}">${t("find_copy", "copy address")}</button>
+      </div>
+    </div>`;
+  }).join("");
+  list.querySelectorAll("[data-fix]").forEach((b) => {
+    b.onclick = () => fixLink(issues[Number(b.dataset.fix)]);
+  });
+  list.querySelectorAll("[data-drop]").forEach((b) => {
+    b.onclick = () => dropProvider(issues[Number(b.dataset.drop)]);
+  });
+  list.querySelectorAll("[data-copylink]").forEach((b) => {
+    b.onclick = () => {
+      navigator.clipboard.writeText(b.dataset.copylink).catch(() => {});
+      $("#linkstate").textContent = t("find_copied", "address copied");
+    };
+  });
+}
+
+async function fixLink(i) {
+  const msg = t("links_confirm_fix", "Fix this provider's address?")
+    + "\n\n" + t("find_confirm_where", "file:") + " " + i.path
+    + "\n\n" + i.base_url + "\n-> " + i.suggested
+    + "\n\n" + t("confirm_delete_note", "A backup is kept; history stays.");
+  if (!window.confirm(msg)) return;
+  const j = await postJSON("/api/fix-link",
+    { provider_id: i.provider_id, new_base: i.suggested });
+  $("#linkstate").textContent = j.ok ? t("links_fixed", "address fixed")
+    : (t("delete_failed", "failed") + ": " + (j.error || ""));
+  loadLinks();
+  refresh();
+}
+
+async function dropProvider(i) {
+  const msg = t("links_confirm_drop", "Delete this duplicate provider?")
+    + "\n\n" + t("find_confirm_where", "file:") + " " + i.path
+    + "\n\n" + i.base_url
+    + "\n\n" + t("links_dup_keeps", "The working provider with the same models stays.")
+    + "\n\n" + t("confirm_delete_note", "A backup is kept; history stays.");
+  if (!window.confirm(msg)) return;
+  const j = await postJSON("/api/drop-provider", { provider_id: i.provider_id });
+  $("#linkstate").textContent = j.ok ? t("links_dropped", "duplicate deleted")
+    : (t("delete_failed", "failed") + ": " + (j.error || ""));
+  loadLinks();
+  refresh();
+}
+
+async function postJSON(url, body) {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return await res.json();
+  } catch (e) { return { ok: false, error: String(e) }; }
 }
 
 async function openDrawer(model, host) {
@@ -620,9 +736,13 @@ async function openDrawer(model, host) {
     : `<div class="drow"><span class="t">${t("uptime_24h", "uptime 24h")}</span>
         <span>${t("no_data", "no data")}</span></div>`;
   const rows = (j.probes || []).map((p) => {
+    let lab = t("note_" + (p.note_code || "error"), "");
+    if (p.note_code === "otpm" && p.tpm_limit) {
+      lab = t("note_otpm_n", "output token cap {n}/min - long chat answers will fail")
+        .replace("{n}", p.tpm_limit);
+    }
     const detail = p.status === "reply" ? esc(p.reply || "")
-      : esc(t("note_" + (p.note_code || "error"), "") || p.note_text
-        || p.error || "HTTP " + (p.http_code || "?"));
+      : esc(lab || p.note_text || p.error || "HTTP " + (p.http_code || "?"));
     return `<div class="drow"><span class="t">${fmtDate(p.ts)}</span>
       <span>${pill(p.status)} ${fmtMs(p.ms)} ${detail}</span></div>`;
   }).join("");
@@ -645,12 +765,33 @@ document.addEventListener("keydown", (e) => {
 });
 
 $("#runnow").onclick = async () => {
+  if (AUTO) {
+    const ok = window.confirm(t("scan_once_while_auto",
+      "Continuous scanning is on; it will run anyway. Scan once now?"));
+    if (!ok) return;
+  }
   $("#scanstate").textContent = t("state_starting", "starting...");
   SCAN_HOLD = Date.now() + 4000;
   CANCELLING = false;
   setScanning(true, t("state_starting", "starting..."));
   await fetch("/api/run", { method: "POST" });
   setTimeout(refresh, 900);
+};
+
+$("#autoscan").onclick = async () => {
+  const next = !AUTO;
+  setAuto(next);
+  $("#scanstate").textContent = t(next ? "auto_starting" : "state_idle",
+    next ? "starting continuous..." : "idle");
+  try {
+    await fetch("/api/auto", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: next }),
+    });
+  } catch (e) { /* the next poll re-syncs the button */ }
+  SCAN_HOLD = Date.now() + (next ? 3000 : 0);
+  setTimeout(refresh, 700);
 };
 
 $("#saveset").onclick = async () => {

@@ -109,6 +109,7 @@ header {
 }
 .dot.live { background: var(--up); box-shadow: 0 0 8px var(--up); }
 .dot.busy { background: var(--empty); box-shadow: 0 0 8px var(--empty); }
+.dot.auto { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .controls { display: flex; align-items: center; gap: 12px; }
 .lang { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .lang button {
@@ -383,3 +384,28 @@ footer .sep { opacity: .4; }
 .drawer-body { padding: 12px 16px; overflow: auto; }
 .drow { display: flex; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--rowline); font-size: 12px; }
 .drow .t { color: var(--dim); width: 150px; flex: none; }
+
+/* broken provider addresses: a loud, self-explaining block */
+.links { margin: 0 16px 10px; }
+.links.hidden { display: none; }
+.link-head {
+  display: flex; align-items: center; gap: 10px; font-size: 12px;
+  color: var(--fail); letter-spacing: .04em; margin-bottom: 6px;
+}
+.link-list { display: grid; gap: 8px; }
+.link-row {
+  border: 1px solid var(--tag-bad-line); border-radius: 8px;
+  background: var(--panel2); padding: 10px 12px;
+}
+.link-top { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; }
+.lkind { color: var(--fail); font-size: 12px; font-weight: 600; }
+.lmodels { color: var(--dim); font-size: 11px; word-break: break-all; }
+.link-old, .link-new code {
+  font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; word-break: break-all;
+}
+.link-old { color: var(--fail); text-decoration: line-through; display: block; }
+.link-new { display: flex; gap: 8px; align-items: baseline; margin-top: 3px; }
+.link-new .lk { color: var(--dim); font-size: 11px; flex: none; }
+.link-new code { color: var(--up); }
+.link-why { color: var(--dim); font-size: 12px; margin: 6px 0 8px; line-height: 1.45; }
+.link-acts { display: flex; gap: 6px; }

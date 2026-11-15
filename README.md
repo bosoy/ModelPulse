@@ -40,9 +40,12 @@ Statuses:
 1. **One-shot run** — `once.cmd`. Probes every model, writes an HTML report and **opens it in a
    separate browser window**; the console window may be closed — the report stays on disk.
 2. **Web monitor** — `start.cmd` runs a local server (`127.0.0.1:8765`) with a dashboard: cards,
-   filter, per-model history, 1h/24h uptime, interval re-scan. A running check can be aborted
-   with **Esc** or the "Cancel" button; a cancelled pass is dropped entirely and never reaches
-   history or statistics.
+   filter, per-model history, 1h/24h uptime, interval re-scan. Two separate buttons drive checks:
+   **Scan once** runs a single pass and stops; **Continuous scan** turns the re-scanning loop on or
+   off. The monitor starts idle — nothing is probed until you press one of them (the interval field
+   is the pause between passes in continuous mode). A running check can be aborted with **Esc** or
+   the "Cancel" button; a cancelled pass is dropped entirely and never reaches history or
+   statistics, and switching continuous mode off lets the current pass finish instead of killing it.
 3. **MCP tool** — `mcp_server.py` exposes a tool the agent can call to run the same pass on demand.
 
 ### Interface language and theme
@@ -106,6 +109,30 @@ Vivaldi, Opera, Yandex, Firefox) → the `.html` association. **Chrome is not re
 the 50 latest are kept, older ones are pruned automatically. `data/last-run.txt` holds the same
 table as text. Each report is self-contained: inline CSS, no server, opens on a double-click.
 
+### Broken provider links
+
+A provider can look alive in the dashboard and still never answer in chat. Two causes are detected
+and shown in a separate panel block:
+
+- **Wrong address.** `baseUrl` holds a model-list URL (`.../v1/models`) or the endpoint itself
+  (`.../chat/completions`). The agent appends its own path and gets 404. The monitor repairs the
+  address on the fly while probing, which is exactly why such a model looks healthy here.
+- **Duplicate provider.** Same root, same key, same models as another entry. It gets zero probes
+  (targets are deduplicated) and only doubles the model in the agent's list.
+
+Each row shows the exact wrong address, the models affected, the replacement address and a plain
+explanation. **Fix address** / **Delete duplicate** ask for confirmation naming the settings file
+and the old → new value, then write the change and keep a backup in `data/backups/`. Nothing is
+edited without that confirmation. Console equivalent: the same audit is returned by `GET /api/links`.
+
+### Output token caps
+
+Some providers cap *output tokens per minute* far below the probe budget (Groq free tier: 1000).
+Asking for 4096 then fails with `Request too large ... (OTPM): Limit 1000`, while a short chat
+message would pass. When the reply names such a cap, the probe **retries at the stated limit** and
+the note shows it: `output token cap 1000/min - long chat answers will fail`. So a model that answers
+`pong` here but dies on a long answer in chat is reported with its real ceiling, not as healthy.
+
 ### Sources: agents on this machine
 
 ModelPulse can find **other agents and clients** installed on the PC and pull models from them.
@@ -118,7 +145,7 @@ python once.py --source zcode          # one pass against the chosen agent
 ```
 
 **The user picks which agent to work with**: click an agent row in the panel to make it active, and
-"Check now" runs against its models. The choice is saved to `config.json` (`active_source`) and
+"Scan once" runs against its models. The choice is saved to `config.json` (`active_source`) and
 survives restarts.
 
 Known-agent catalog: Qoder, zcode, Codex CLI, free-claude-code, Cline, Claude Code, Gemini CLI,
@@ -190,9 +217,13 @@ ModelPulse читает **тот же файл** и активно прозва�
 1. **Разовый прогон** — `once.cmd`. Прозванивает все модели, пишет HTML-отчёт и **открывает его
    отдельным окном браузера**; окно консоли можно закрыть — отчёт остаётся на диске.
 2. **Веб-монитор** — `start.cmd` поднимает локальный сервер (`127.0.0.1:8765`) с дашбордом:
-   карточки, фильтр, история по каждой модели, доступность за 1ч/24ч, автоопрос по интервалу.
-   Идущую проверку можно прервать: **Esc** или кнопка «Отменить». Отменённый прогон отбрасывается
-   целиком — в историю и статистику он не попадает.
+   карточки, фильтр, история по каждой модели, доступность за 1ч/24ч. Проверки включают две
+   отдельные кнопки: **«Разовый скан»** делает один проход и останавливается, **«Постоянный скан»**
+   включает или выключает цикл повторных проверок. Монитор стартует в ожидании — ничего не
+   прозванивается, пока не нажмёшь одну из кнопок (поле «интервал» — пауза между проходами в
+   постоянном режиме). Идущую проверку можно прервать: **Esc** или кнопка «Отменить». Отменённый
+   прогон отбрасывается целиком — в историю и статистику он не попадает; выключение постоянного
+   режима даёт текущему проходу доиграть, а не обрывает его.
 3. **MCP-тул** — `mcp_server.py` отдаёт инструмент агенту, который по запросу делает тот же прогон.
 
 ### Язык интерфейса и тема
@@ -268,6 +299,31 @@ Opera, Yandex, Firefox) → ассоциация `.html`. **Chrome не обяз
 
 Отчёт самодостаточен: весь CSS внутри, сервер не нужен, открывается двойным кликом.
 
+### Битые ссылки провайдеров
+
+Провайдер может выглядеть живым в панели и при этом никогда не отвечать в чате. Две причины
+находятся автоматически и показываются отдельным блоком:
+
+- **Не тот адрес.** В `baseUrl` вставлен адрес списка моделей (`.../v1/models`) или самого эндпоинта
+  (`.../chat/completions`). Агент добавляет к нему свой путь и получает 404. Монитор при прозвоне
+  чинит адрес на лету — именно поэтому такая модель здесь выглядит здоровой.
+- **Дубль провайдера.** Тот же корень, тот же ключ, те же модели, что у другой записи. Прозвонов у
+  него ноль (цели схлопываются), а в списке агента модель просто двоится.
+
+В каждой строке — точный неверный адрес, затронутые модели, правильный адрес и понятное объяснение.
+**«Исправить адрес»** / **«Удалить дубль»** сначала спрашивают подтверждение, где названы файл
+настроек и старое → новое значение, и только потом пишут правку; бэкап остаётся в `data/backups/`.
+Без подтверждения ничего не меняется. Из консоли тот же аудит отдаёт `GET /api/links`.
+
+### Лимит токенов на ответ
+
+У части провайдеров потолок *выходных токенов в минуту* намного ниже бюджета прозвона (бесплатный
+Groq: 1000). Запрос на 4096 тогда падает с `Request too large ... (OTPM): Limit 1000`, хотя короткое
+сообщение в чате прошло бы. Если в ответе назван такой потолок, прозвон **повторяется на этом
+лимите**, а примечание показывает его: `лимит 1000 токенов/мин на ответ — длинный ответ в чате не
+пройдёт`. Модель, которая отвечает здесь `pong`, но умирает на длинном ответе в чате, показывается
+со своим реальным потолком, а не как здоровая.
+
 ### Источники: агенты на компьютере
 
 ModelPulse умеет искать на ПК **другие агенты и клиенты** и брать модели из них. Есть вкладка
@@ -280,7 +336,7 @@ python once.py --source zcode          # разовый прогон по выб
 ```
 
 **Клиент сам выбирает, с каким агентом работать**: в панели щёлкни строку агента — он станет
-активным, и «Проверить сейчас» пойдёт по его моделям. Выбор сохраняется в `config.json`
+активным, и «Разовый скан» пойдёт по его моделям. Выбор сохраняется в `config.json`
 (`active_source`) и переживает перезапуск.
 
 Каталог известных агентов: Qoder, zcode, Codex CLI, free-claude-code, Cline, Claude Code,

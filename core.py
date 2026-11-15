@@ -147,6 +147,58 @@ def host_of(base):
         return base
 
 
+def audit_links(path=None):
+    """Report provider baseUrls that cannot serve chat/completions.
+
+    A baseUrl ending in /models (or /chat/completions) is a listing/endpoint
+    URL pasted into the base field: the agent appends its own path and gets
+    404. api_root() silently repairs it for probing, which is exactly why such
+    a provider looks fine in the dashboard yet never answers in chat.
+    Returns issues with the exact address and a suggested replacement.
+    No keys are ever returned.
+    """
+    path = path or resolve_settings_path()
+    try:
+        with open(path, "rb") as fh:
+            data = json.loads(fh.read().decode("utf-8-sig"))
+    except Exception as e:
+        return {"path": path, "issues": [], "error": str(e)}
+    provs = data.get("providers") or {}
+    issues = []
+    roots = {}
+    for pid, obj in provs.items():
+        if not isinstance(obj, dict):
+            continue
+        base = (obj.get("baseUrl") or "").strip()
+        if not base:
+            continue
+        models = [m for m in (_model_entry_id(x) for x in (obj.get("models") or []))
+                  if m]
+        if not models and obj.get("model"):
+            models = [obj["model"]]
+        kind = ""
+        if base.rstrip("/").endswith("/chat/completions"):
+            kind = "endpoint_url"
+        elif base.rstrip("/").endswith("/models"):
+            kind = "list_url"
+        root = api_root(base)
+        sig = (root, (obj.get("apiKey") or "").strip(), tuple(sorted(models)))
+        dup = roots.get(sig)
+        roots.setdefault(sig, pid)
+        if kind or dup:
+            issues.append({
+                "provider_id": pid,
+                "base_url": base,
+                "root": root,
+                "models": models,
+                "kind": kind or "duplicate",
+                "suggested": root if kind else "",
+                "duplicate_of": dup or "",
+                "path": path,
+            })
+    return {"path": path, "issues": issues}
+
+
 # -- multi-source dispatch ---------------------------------------------
 def _import_discover():
     import discover
@@ -206,7 +258,9 @@ def http_json(url, key, payload=None, timeout=DEFAULT_TIMEOUT):
             raw = e.read().decode("utf-8", "replace")
         except Exception:
             raw = ""
-        return e.code, _maybe_json(raw), raw[:200]
+        # keep enough of the body for the stated token cap to survive: a long
+        # organization id used to push "Limit 1000" past the cut
+        return e.code, _maybe_json(raw), raw[:600]
     except Exception as e:
         return None, None, type(e).__name__ + ": " + str(e)[:200]
     return code, _maybe_json(body), None
@@ -250,8 +304,25 @@ def extract_text(body):
     return None, "no text"
 
 
-def probe(target, timeout=DEFAULT_TIMEOUT, max_tokens=DEFAULT_MAX_TOKENS):
-    url = target["root"] + "/chat/completions"
+_OTPM_RE = re.compile(
+    r"output tokens per minute[^.]*?Limit[: ]+(\d+)", re.I)
+_LIMIT_RE = re.compile(r"Limit[: ]+(\d+)", re.I)
+
+
+def otpm_limit(error):
+    """Groq-style 'Request too large ... output tokens per minute (OTPM):
+    Limit 1000' -> 1000. Zero when the body carries no such cap."""
+    s = error or ""
+    if "too large" not in s.lower():
+        return 0
+    m = _OTPM_RE.search(s) or _LIMIT_RE.search(s)
+    try:
+        return int(m.group(1)) if m else 0
+    except Exception:
+        return 0
+
+
+def _probe_once(target, url, timeout, max_tokens):
     payload = {
         "model": target["model"],
         "messages": [{"role": "user", "content": PROMPT}],
@@ -278,7 +349,7 @@ def probe(target, timeout=DEFAULT_TIMEOUT, max_tokens=DEFAULT_MAX_TOKENS):
     else:
         error = err or ""
         if not error and isinstance(body, dict):
-            error = str(body.get("error") or body)[:200]
+            error = str(body.get("error") or body)[:600]
     return {
         "model": target["model"],
         "host": target["host"],
@@ -288,7 +359,24 @@ def probe(target, timeout=DEFAULT_TIMEOUT, max_tokens=DEFAULT_MAX_TOKENS):
         "ms": ms,
         "reply": reply,
         "error": error,
+        "limit_tpm": 0,
     }
+
+
+def probe(target, timeout=DEFAULT_TIMEOUT, max_tokens=DEFAULT_MAX_TOKENS):
+    """One probe. If the provider caps output tokens per minute lower than the
+    budget we asked for, retry at that cap so a short ping is not mistaken for
+    a dead model - and remember the cap so the panel can warn about it."""
+    url = target["root"] + "/chat/completions"
+    res = _probe_once(target, url, timeout, max_tokens)
+    if res["status"] != "reply":
+        cap = otpm_limit(res.get("error") or "")
+        if cap and cap < max_tokens:
+            res["limit_tpm"] = cap
+            retry = _probe_once(target, url, timeout, max(1, min(cap, 1024)))
+            retry["limit_tpm"] = cap
+            return retry
+    return res
 
 
 def scan(targets, timeout=DEFAULT_TIMEOUT, workers=DEFAULT_WORKERS,
@@ -456,6 +544,8 @@ def classify_note(status, http_code, error):
         return "offline"
     if "in flight" in msg or "concurrency" in err:
         return "concurrency"
+    if otpm_limit(error):
+        return "otpm"
     if "rate limit" in msg or "too many requests" in msg or "rate_limit" in err \
             or "request limit" in msg:
         return "limit"
@@ -566,6 +656,59 @@ def _dump_json(data, has_bom, trailing_nl):
     if has_bom:
         return "\ufeff" + body
     return body
+
+
+def fix_base_url(path, provider_id, new_base):
+    """Point a provider's baseUrl at the API root (client-approved only)."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        has_bom, nl = _json_style(raw)
+        data = json.loads(raw.decode("utf-8-sig"))
+    except Exception as e:
+        return {"ok": False, "error": "cannot read json: %s" % e}
+    provs = data.get("providers")
+    if not isinstance(provs, dict):
+        return {"ok": False, "error": "no providers block"}
+    obj = provs.get((provider_id or "").strip())
+    if not isinstance(obj, dict):
+        return {"ok": False, "error": "provider not found"}
+    old = (obj.get("baseUrl") or "").strip()
+    new_base = (new_base or "").strip()
+    if not new_base or new_base == old:
+        return {"ok": False, "error": "nothing to change"}
+    obj["baseUrl"] = new_base
+    try:
+        backup = _backup_file(path)
+        _atomic_write(path, _dump_json(data, has_bom, nl))
+    except Exception as e:
+        return {"ok": False, "error": "cannot write: %s" % e}
+    return {"ok": True, "provider_id": provider_id, "old": old, "new": new_base,
+            "backup": backup}
+
+
+def remove_provider(path, provider_id):
+    """Drop a whole duplicate provider entry (client-approved only)."""
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        has_bom, nl = _json_style(raw)
+        data = json.loads(raw.decode("utf-8-sig"))
+    except Exception as e:
+        return {"ok": False, "error": "cannot read json: %s" % e}
+    provs = data.get("providers")
+    if not isinstance(provs, dict):
+        return {"ok": False, "error": "no providers block"}
+    pid = (provider_id or "").strip()
+    if pid not in provs:
+        return {"ok": False, "error": "provider not found: %s" % pid}
+    del provs[pid]
+    try:
+        backup = _backup_file(path)
+        _atomic_write(path, _dump_json(data, has_bom, nl))
+    except Exception as e:
+        return {"ok": False, "error": "cannot write: %s" % e}
+    return {"ok": True, "provider_id": pid, "backup": backup}
 
 
 def _remove_json_list(path, container, provider_id, model):

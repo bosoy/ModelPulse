@@ -41,7 +41,8 @@
       <input id="maxtok" type="number" min="1" step="1" value="4096">
     </label>
     <button id="saveset" class="ghost" data-i18n="save"></button>
-    <button id="runnow" class="primary" data-i18n="scan_now"></button>
+    <button id="runnow" class="primary" data-i18n="scan_once"></button>
+    <button id="autoscan" class="ghost" data-i18n="scan_auto"></button>
   </div>
 </header>
 
@@ -75,6 +76,14 @@
     <span class="status" id="srcstate"></span>
   </div>
   <div id="srclist" class="src-list hidden"></div>
+</section>
+
+<section class="links" id="linksec">
+  <div class="link-head">
+    <span data-i18n="links_title"></span>
+    <span class="status" id="linkstate"></span>
+  </div>
+  <div id="linklist" class="link-list"></div>
 </section>
 
 <section class="finder">

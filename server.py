@@ -41,11 +41,16 @@ STATE = {
     "scan_total": 0,
     "scan_done": 0,
     "scan_current": None,
+    "auto": False,
 }
 STATE_LOCK = threading.Lock()
 STORE = None
 RUN_LOCK = threading.Lock()
 CANCEL = threading.Event()
+# auto (continuous) scanning: AUTO holds the on/off state, AUTO_WAKE nudges the
+# scheduler to re-read it at once instead of sleeping out the whole interval
+AUTO = threading.Event()
+AUTO_WAKE = threading.Event()
 
 
 def do_scan(trigger):
@@ -132,11 +137,22 @@ def do_scan(trigger):
 
 
 def scheduler_loop():
+    """Continuous scanning, driven by the AUTO toggle.
+
+    Parked while AUTO is off, so nothing runs unless the user asks for it or
+    turns continuity on. On each turn: scan, then wait out the interval (an
+    AUTO_WAKE from the toggle cuts the wait short immediately).
+    """
     while True:
+        if not AUTO.is_set():
+            AUTO_WAKE.wait()
+            AUTO_WAKE.clear()
+            continue
+        do_scan("schedule")
         with STATE_LOCK:
             interval = STATE["interval"]
-        time.sleep(interval)
-        do_scan("schedule")
+        AUTO_WAKE.wait(timeout=interval)
+        AUTO_WAKE.clear()
 
 
 def open_in_explorer(path):
@@ -238,9 +254,15 @@ class Handler(BaseHTTPRequestHandler):
                 "models": st["model_count"],
                 "interval": st["interval"],
                 "scanning": st["scanning"],
+                "auto": st.get("auto", False),
                 "last_error": st["last_error"],
                 "last_cancelled": st.get("last_cancelled", False),
             })
+        elif p == "/api/links":
+            try:
+                self._json(core.audit_links(core.resolve_settings_path()))
+            except Exception as e:
+                self._json({"path": "", "issues": [], "error": str(e)})
         elif p == "/api/progress":
             with STATE_LOCK:
                 st = dict(STATE)
@@ -297,6 +319,7 @@ class Handler(BaseHTTPRequestHandler):
                 r["note_code"] = core.classify_note(
                     r.get("status"), r.get("http_code"), r.get("error"))
                 r["note_text"] = core.note_text(r.get("error"))
+                r["tpm_limit"] = core.otpm_limit(r.get("error"))
             self._json({"models": rows})
         elif p.startswith("/api/model/"):
             from urllib.parse import unquote, parse_qs
@@ -308,6 +331,7 @@ class Handler(BaseHTTPRequestHandler):
                 pr["note_code"] = core.classify_note(
                     pr.get("status"), pr.get("http_code"), pr.get("error"))
                 pr["note_text"] = core.note_text(pr.get("error"))
+                pr["tpm_limit"] = core.otpm_limit(pr.get("error"))
             self._json({"model": model, "host": host,
                         "probes": probes,
                         "uptime_24h": STORE.uptime(model, host, time.time() - 86400)})
@@ -324,6 +348,23 @@ class Handler(BaseHTTPRequestHandler):
                 return
             threading.Thread(target=do_scan, args=("manual",), daemon=True).start()
             self._json({"ok": True, "started": True})
+        elif p == "/api/auto":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            with STATE_LOCK:
+                if "on" in data:
+                    STATE["auto"] = bool(data.get("on"))
+                state = STATE["auto"]
+            if state:
+                AUTO.set()
+            else:
+                AUTO.clear()
+            AUTO_WAKE.set()
+            self._json({"ok": True, "auto": state})
         elif p == "/api/cancel":
             with STATE_LOCK:
                 scanning = STATE["scanning"]
@@ -471,6 +512,24 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
             self._json(res, 200 if res.get("ok") else 409)
+        elif p in ("/api/fix-link", "/api/drop-provider"):
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            pid = str(data.get("provider_id") or "").strip()
+            if not pid:
+                self._json({"error": "provider_id required"}, 400)
+                return
+            path = core.resolve_settings_path()
+            if p == "/api/fix-link":
+                # the client approved this exact replacement shown in the row
+                res = core.fix_base_url(path, pid, str(data.get("new_base") or ""))
+            else:
+                res = core.remove_provider(path, pid)
+            self._json(res, 200 if res.get("ok") else 409)
         else:
             self._json({"error": "not found"}, 404)
 
@@ -480,7 +539,8 @@ def main():
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--interval", type=int, default=900)
-    ap.add_argument("--no-scan-on-start", action="store_true")
+    ap.add_argument("--scan-on-start", action="store_true",
+                    help="probe once at launch and turn continuous scanning on")
     args = ap.parse_args()
 
     global STORE
@@ -498,11 +558,12 @@ def main():
 
     threading.Thread(target=scheduler_loop, daemon=True).start()
 
-    if not args.no_scan_on_start:
-        def boot():
-            time.sleep(1.0)
-            do_scan("startup")
-        threading.Thread(target=boot, daemon=True).start()
+    # by default nothing scans until asked: the scheduler is parked and no
+    # pass runs at launch. --scan-on-start turns continuity on instead.
+    if args.scan_on_start:
+        with STATE_LOCK:
+            STATE["auto"] = True
+        AUTO.set()
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print("ModelPulse on http://%s:%d  (interval %ds)" % (args.host, args.port,
