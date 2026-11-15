@@ -11,7 +11,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 DEFAULT_SETTINGS = os.path.join(os.path.expanduser("~"), ".qoder", "settings.json")
 DEFAULT_TIMEOUT = 30.0
@@ -280,11 +280,35 @@ def probe(target, timeout=DEFAULT_TIMEOUT, max_tokens=16):
     }
 
 
-def scan(targets, timeout=DEFAULT_TIMEOUT, workers=DEFAULT_WORKERS, max_tokens=16):
+def scan(targets, timeout=DEFAULT_TIMEOUT, workers=DEFAULT_WORKERS, max_tokens=16,
+         should_stop=None):
+    """Probe targets in parallel. should_stop() -> True aborts the rest.
+
+    Cancellation is checked between completions (every ~0.25s), so it is prompt
+    from the caller's view. Requests already in flight cannot be killed cleanly
+    and finish in the background; their results are simply dropped.
+    """
     if not targets:
         return []
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda t: probe(t, timeout, max_tokens), targets))
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        pending = {pool.submit(probe, t, timeout, max_tokens) for t in targets}
+        results = []
+        while pending:
+            if should_stop is not None and should_stop():
+                for f in pending:
+                    f.cancel()
+                break
+            done, pending = wait(pending, timeout=0.25,
+                                 return_when=FIRST_COMPLETED)
+            for f in done:
+                try:
+                    results.append(f.result())
+                except Exception:
+                    pass
+        return results
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def summarize(results):

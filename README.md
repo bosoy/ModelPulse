@@ -28,6 +28,8 @@ ModelPulse читает **тот же файл** и активно прозва�
    отдельным окном браузера**; окно консоли можно закрыть — отчёт остаётся на диске.
 2. **Веб-монитор** — `start.cmd` поднимает локальный сервер (`127.0.0.1:8765`) с дашбордом:
    карточки, фильтр, история по каждой модели, доступность за 1ч/24ч, автоопрос по интервалу.
+   Идущую проверку можно прервать: **Esc** или кнопка «Отменить»; отменённый прогон сохраняется
+   в истории с пометкой.
 3. **MCP-тул** — `mcp_server.py` отдаёт инструмент агенту, который по запросу делает тот же прогон.
 
 ### Язык интерфейса
@@ -172,7 +174,8 @@ Statuses:
 1. **One-shot run** — `once.cmd`. Probes every model, writes an HTML report and **opens it in a
    separate browser window**; the console window may be closed — the report stays on disk.
 2. **Web monitor** — `start.cmd` runs a local server (`127.0.0.1:8765`) with a dashboard: cards,
-   filter, per-model history, 1h/24h uptime, interval re-scan.
+   filter, per-model history, 1h/24h uptime, interval re-scan. A running check can be aborted:
+   **Esc** or the "Cancel" button; the cancelled run is kept in history with a flag.
 3. **MCP tool** — `mcp_server.py` exposes a tool the agent can call to run the same pass on demand.
 
 ### Interface language

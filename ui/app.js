@@ -204,15 +204,21 @@ function setCards(last) {
 
 let SCANNING = false;
 let SCAN_HOLD = 0;
+let CANCELLING = false;
 
 function setScanning(on, sub) {
   const ov = $("#scan-overlay");
   if (!ov) return;
   if (on) {
     $("#scan-sub").textContent = sub || "";
+    $("#scan-hint").textContent = t("cancel_hint", "Esc");
+    const cb = $("#scan-cancel");
+    cb.textContent = t("cancel", "Cancel");
+    cb.disabled = false;
     ov.classList.remove("hidden");
   } else {
     ov.classList.add("hidden");
+    CANCELLING = false;
   }
 }
 
@@ -222,10 +228,24 @@ function scanSub(j) {
   return [who, n].filter(Boolean).join(" - ");
 }
 
+async function cancelScan() {
+  if (!SCANNING || CANCELLING) return;
+  CANCELLING = true;
+  SCAN_HOLD = 0;
+  const cb = $("#scan-cancel");
+  if (cb) { cb.disabled = true; cb.textContent = t("cancelling", "cancelling..."); }
+  $("#scanstate").textContent = t("cancelling", "cancelling...");
+  try {
+    await fetch("/api/cancel", { method: "POST" });
+  } catch (e) { /* the next poll will reveal the state */ }
+  setTimeout(refresh, 400);
+}
+
 async function loadSource() {
   const j = await (await fetch("/api/source")).json();
   const now = Date.now();
   const show = !!j.scanning || now < SCAN_HOLD;
+  const wasScanning = SCANNING;
   SCANNING = show;
   setScanning(show, scanSub(j));
   $("#c-source").textContent = j.path || "-";
@@ -235,10 +255,15 @@ async function loadSource() {
   $("#interval").value = j.interval;
   const dot = $("#livedot");
   dot.className = "dot " + (j.scanning ? "busy" : "live");
-  $("#scanstate").textContent = j.scanning
-    ? t("state_scanning", "scanning...")
-    : (j.last_error ? t("state_error", "error") + ": " + j.last_error
-                    : t("state_idle", "idle"));
+  if (j.scanning) {
+    $("#scanstate").textContent = t("state_scanning", "scanning...");
+  } else if (j.last_cancelled && wasScanning) {
+    $("#scanstate").textContent = t("cancelled", "cancelled");
+  } else {
+    $("#scanstate").textContent = j.last_error
+      ? t("state_error", "error") + ": " + j.last_error
+      : t("state_idle", "idle");
+  }
   if (j.scanning) setTimeout(refresh, 1500);
   return j;
 }
@@ -396,9 +421,21 @@ async function openDrawer(model, host) {
 
 $("#d-close").onclick = () => $("#drawer").classList.add("hidden");
 
+$("#scan-cancel").onclick = () => cancelScan();
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#drawer").classList.contains("hidden")) {
+    $("#drawer").classList.add("hidden");
+    return;
+  }
+  if (SCANNING) cancelScan();
+});
+
 $("#runnow").onclick = async () => {
   $("#scanstate").textContent = t("state_starting", "starting...");
   SCAN_HOLD = Date.now() + 4000;
+  CANCELLING = false;
   setScanning(true, t("state_starting", "starting..."));
   await fetch("/api/run", { method: "POST" });
   setTimeout(refresh, 900);

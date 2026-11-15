@@ -206,6 +206,13 @@ footer .sep { opacity: .4; }
   100% { transform: translateX(300%); }
 }
 .scan-sub { color: var(--dim); font-size: 13px; letter-spacing: .04em; }
+.scan-hint { color: var(--dim); font-size: 11px; letter-spacing: .04em; opacity: .8; }
+#scan-cancel {
+  pointer-events: auto; margin-top: 4px; padding: 7px 20px; font-size: 13px;
+  border-color: var(--line); color: var(--fg); background: var(--panel2);
+}
+#scan-cancel:hover { border-color: var(--fail); color: var(--fail); }
+#scan-cancel[disabled] { opacity: .5; cursor: default; border-color: var(--line); color: var(--dim); }
 
 .drawer {
   position: fixed; top: 0; right: 0; width: 520px; max-width: 92vw; height: 100vh;

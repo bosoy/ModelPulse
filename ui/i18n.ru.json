@@ -98,5 +98,10 @@
   "unknown_source": "неизвестный источник, беру",
   "warn_notprobeable": "не прозвонить",
   "scan_running": "идёт проверка",
-  "lang_title": "язык"
+  "lang_title": "язык",
+  "cancel": "Отменить",
+  "cancel_hint": "Esc — отменить проверку",
+  "cancelling": "отменяю...",
+  "cancelled": "проверка отменена",
+  "cancel_none": "нет активной проверки"
 }

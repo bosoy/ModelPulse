@@ -32,22 +32,26 @@ STATE = {
     "provider_count": 0,
     "model_count": 0,
     "last_error": None,
+    "last_cancelled": False,
     "language": "ru",
     "settings_override": "",
 }
 STATE_LOCK = threading.Lock()
 STORE = None
 RUN_LOCK = threading.Lock()
+CANCEL = threading.Event()
 
 
 def do_scan(trigger):
     """Run one full scan and persist it. Serialized so scans never overlap."""
     if not RUN_LOCK.acquire(blocking=False):
         return None, "scan already running"
+    CANCEL.clear()
     try:
         with STATE_LOCK:
             STATE["scanning"] = True
             STATE["last_scan_started"] = time.time()
+            STATE["last_cancelled"] = False
             active = STATE["active_source"]
             deep = STATE["deep_scan"]
             override = (STATE.get("settings_override") or "").strip()
@@ -66,13 +70,19 @@ def do_scan(trigger):
             STATE["last_error"] = None
         run_id = STORE.start_run(path, trigger)
         results = core.scan(targets, timeout=STATE["timeout"],
-                            max_tokens=STATE["max_tokens"])
-        STORE.add_probes(run_id, results)
+                            max_tokens=STATE["max_tokens"],
+                            should_stop=CANCEL.is_set)
+        cancelled = CANCEL.is_set()
+        if results:
+            STORE.add_probes(run_id, results)
         summary = core.summarize(results)
-        STORE.finish_run(run_id, summary)
+        STORE.finish_run(run_id, summary, cancelled=cancelled)
         with STATE_LOCK:
             STATE["last_scan_finished"] = time.time()
             STATE["scanning"] = False
+            STATE["last_cancelled"] = cancelled
+            if cancelled:
+                STATE["last_error"] = None
         return run_id, None
     except Exception as e:
         with STATE_LOCK:
@@ -80,6 +90,7 @@ def do_scan(trigger):
             STATE["last_error"] = str(e)
         return None, str(e)
     finally:
+        CANCEL.clear()
         RUN_LOCK.release()
 
 
@@ -191,6 +202,7 @@ class Handler(BaseHTTPRequestHandler):
                 "interval": st["interval"],
                 "scanning": st["scanning"],
                 "last_error": st["last_error"],
+                "last_cancelled": st.get("last_cancelled", False),
             })
         elif p == "/api/sources":
             from urllib.parse import parse_qs
@@ -240,6 +252,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             threading.Thread(target=do_scan, args=("manual",), daemon=True).start()
             self._json({"ok": True, "started": True})
+        elif p == "/api/cancel":
+            with STATE_LOCK:
+                scanning = STATE["scanning"]
+            if not scanning:
+                self._json({"ok": False, "reason": "not scanning"})
+                return
+            CANCEL.set()
+            self._json({"ok": True, "cancelling": True})
         elif p == "/api/settings":
             try:
                 length = int(self.headers.get("Content-Length") or 0)

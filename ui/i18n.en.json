@@ -98,5 +98,10 @@
   "unknown_source": "unknown source, using",
   "warn_notprobeable": "cannot probe",
   "scan_running": "scanning",
-  "lang_title": "language"
+  "lang_title": "language",
+  "cancel": "Cancel",
+  "cancel_hint": "Esc — cancel the check",
+  "cancelling": "cancelling...",
+  "cancelled": "check cancelled",
+  "cancel_none": "no active check"
 }
