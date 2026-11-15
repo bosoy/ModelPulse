@@ -12,6 +12,26 @@ let SORT = { key: "host", dir: 1 };
 const PILL = { reply: "REPLY", empty: "EMPTY", fail: "FAIL" };
 const LOCALES = { ru: "ru-RU", en: "en-US" };
 const DATE_LOCALE = () => LOCALES[LANG] || "ru-RU";
+const THEMES = ["light", "dark", "system"];
+let THEME = "system";
+
+function applyTheme(theme) {
+  THEME = THEMES.includes(theme) ? theme : "system";
+  document.documentElement.setAttribute("data-theme", THEME);
+  document.querySelectorAll("#theme button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.theme === THEME);
+  });
+}
+
+function setTheme(theme) {
+  applyTheme(theme);
+  try { localStorage.setItem("mp-theme", THEME); } catch (e) { /* private mode */ }
+  fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ theme: THEME }),
+  }).catch(() => {});
+}
 
 function t(key, fallback) {
   return (T && T[key]) || fallback || key;
@@ -31,6 +51,11 @@ function applyI18n() {
   });
   const lt = $("#lang");
   if (lt) lt.setAttribute("aria-label", t("lang_title", "language"));
+  document.querySelectorAll("#theme button").forEach((b) => {
+    b.title = t("theme_" + b.dataset.theme, b.dataset.theme);
+  });
+  const tt = $("#theme");
+  if (tt) tt.setAttribute("aria-label", t("theme_title", "theme"));
 }
 
 async function loadLangPack(lang) {
@@ -516,12 +541,32 @@ document.querySelectorAll("#lang button").forEach((b) => {
   b.onclick = () => { if (b.dataset.lang !== LANG) setLang(b.dataset.lang); };
 });
 
+document.querySelectorAll("#theme button").forEach((b) => {
+  b.onclick = () => { if (b.dataset.theme !== THEME) setTheme(b.dataset.theme); };
+});
+
+// follow the OS live while the user keeps "system" selected
+if (window.matchMedia) {
+  const mq = window.matchMedia("(prefers-color-scheme: light)");
+  const onScheme = () => { if (THEME === "system") applyTheme("system"); };
+  if (mq.addEventListener) mq.addEventListener("change", onScheme);
+  else if (mq.addListener) mq.addListener(onScheme);
+}
+
 (async () => {
+  // theme: the inline head script already applied localStorage; sync the buttons
+  applyTheme(document.documentElement.getAttribute("data-theme") || "system");
   let saved = "ru";
+  let savedTheme = "";
   try {
     const c = await (await fetch("/api/config", { cache: "no-store" })).json();
     saved = (c.config && c.config.language) || "ru";
-  } catch (e) { /* fall back to Russian */ }
+    savedTheme = (c.config && c.config.theme) || "";
+  } catch (e) { /* fall back to defaults */ }
+  // first run on this browser: adopt the theme stored in config.json
+  if (!localStorage.getItem("mp-theme") && THEMES.includes(savedTheme)) {
+    applyTheme(savedTheme);
+  }
   LANG = LOCALES[saved] ? saved : "ru";
   await loadLangPack(LANG);
   applyI18n();

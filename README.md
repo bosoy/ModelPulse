@@ -33,11 +33,16 @@ Statuses:
    history or statistics.
 3. **MCP tool** — `mcp_server.py` exposes a tool the agent can call to run the same pass on demand.
 
-### Interface language
+### Interface language and theme
 
 The dashboard and the report are bilingual: **RU / EN**. Toggle via the `RU | EN` segment in the
 top-right corner of the dashboard; the choice is stored in `config.json → language` and applies to
 the next `once.py` report. One-off override: `python once.py --lang en`.
+
+The dashboard also switches **theme**: ☀ light, ☾ dark, 🖥 follow the system. The choice is kept in
+`localStorage` (`mp-theme`) for instant application on the next load and mirrored to
+`config.json → theme`, so a fresh browser picks up your last choice. "Follow the system" tracks the
+OS live.
 
 ### Requirements
 
@@ -67,6 +72,7 @@ On Windows, double-click `once.cmd` / `start.cmd` instead.
   "timeout_seconds": 30,
   "workers": 8,
   "language": "ru",
+  "theme": "system",
   "browser": ""
 }
 ```
@@ -164,11 +170,16 @@ ModelPulse читает **тот же файл** и активно прозва�
    целиком — в историю и статистику он не попадает.
 3. **MCP-тул** — `mcp_server.py` отдаёт инструмент агенту, который по запросу делает тот же прогон.
 
-### Язык интерфейса
+### Язык интерфейса и тема
 
 Дашборд и отчёт двуязычные: **RU / EN**. Переключатель — сегмент `RU | EN` в правом верхнем углу
 панели; выбор сохраняется в `config.json → language` и применяется к следующему отчёту `once.py`.
 Разово переопределить: `python once.py --lang en`.
+
+Ещё в панели переключается **тема**: ☀ светлая, ☾ тёмная, 🖥 как в системе. Выбор хранится в
+`localStorage` (`mp-theme`) — чтобы примениться сразу при следующей загрузке — и дублируется в
+`config.json → theme`, так что свежий браузер подхватит последний выбор. «Как в системе» следит
+за ОС на ходу.
 
 ### Требования
 
@@ -205,6 +216,7 @@ python server.py --port 8765 --interval 900
   "timeout_seconds": 30,
   "workers": 8,
   "language": "ru",
+  "theme": "system",
   "browser": ""
 }
 ```

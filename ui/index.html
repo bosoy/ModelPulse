@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ModelPulse</title>
 <link rel="icon" type="image/png" href="/favicon.png">
+<script>
+  // apply the saved theme before first paint to avoid a flash
+  try {
+    document.documentElement.setAttribute("data-theme",
+      localStorage.getItem("mp-theme") || "system");
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "system");
+  }
+</script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -15,6 +24,11 @@
     <span class="sub" data-i18n="tagline"></span>
   </div>
   <div class="controls">
+    <div class="theme" id="theme" role="group" aria-label="theme">
+      <button data-theme="light" title="light">☀</button>
+      <button data-theme="dark" title="dark">☾</button>
+      <button data-theme="system" title="system">🖥</button>
+    </div>
     <div class="lang" id="lang" role="group" aria-label="language">
       <button data-lang="ru" class="on">RU</button>
       <button data-lang="en">EN</button>

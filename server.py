@@ -34,6 +34,7 @@ STATE = {
     "last_error": None,
     "last_cancelled": False,
     "language": "ru",
+    "theme": "system",
     "settings_override": "",
 }
 STATE_LOCK = threading.Lock()
@@ -285,6 +286,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE["settings_override"] = str(data.get("settings_path") or "").strip()
                 if data.get("language") in ("ru", "en"):
                     STATE["language"] = data["language"]
+                if data.get("theme") in ("light", "dark", "system"):
+                    STATE["theme"] = data["theme"]
                 st = dict(STATE)
             try:
                 core.save_config({
@@ -293,6 +296,7 @@ class Handler(BaseHTTPRequestHandler):
                     "timeout_seconds": st["timeout"],
                     "settings_path": st["settings_override"],
                     "language": st["language"],
+                    "theme": st["theme"],
                 })
             except Exception:
                 pass
@@ -351,6 +355,7 @@ def main():
         STATE["max_tokens"] = max(1, int(cfg.get("max_tokens") or 16))
         STATE["timeout"] = max(5.0, float(cfg.get("timeout_seconds") or 30))
         STATE["language"] = cfg.get("language") or "ru"
+        STATE["theme"] = cfg.get("theme") or "system"
         STATE["settings_override"] = (cfg.get("settings_path") or "").strip()
         STATE["active_source"] = (cfg.get("active_source") or "qoder").strip()
 

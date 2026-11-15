@@ -29,6 +29,7 @@ _DEFAULT_CONFIG = {
     "timeout_seconds": 30,
     "workers": 8,
     "language": "ru",
+    "theme": "system",
     "browser": "",
     "active_source": "qoder",
 }
