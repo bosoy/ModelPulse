@@ -103,6 +103,9 @@ header {
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand h1 { font-size: 15px; margin: 0; letter-spacing: .4px; }
 .brand .sub { color: var(--dim); font-size: 12px; }
+.brand .ver { color: var(--dim); font-size: 11px; opacity: .7;
+  font-variant-numeric: tabular-nums; border: 1px solid var(--line);
+  border-radius: 8px; padding: 0 6px; }
 .dot {
   width: 9px; height: 9px; border-radius: 50%; background: var(--dim);
   display: inline-block;

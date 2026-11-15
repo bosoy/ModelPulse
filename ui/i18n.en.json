@@ -1,6 +1,7 @@
 {
   "app_name": "ModelPulse",
   "tagline": "model availability monitor",
+  "version_word": "version",
   "scan_now": "Check now",
   "scan_once": "Scan once",
   "scan_auto": "Continuous scan",

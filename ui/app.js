@@ -655,6 +655,12 @@ async function loadConfig() {
 async function loadSummary() {
   const j = await (await fetch("/api/summary")).json();
   setCards(j.last_run);
+  if (j.version) {
+    const v = $("#ver");
+    v.hidden = false;
+    v.textContent = "v" + j.version;
+    v.title = t("version_word", "version") + (j.built ? " - " + j.built : "");
+  }
   const lr = j.last_run;
   if (lr) {
     const trg = t("trigger_" + lr.trigger, lr.trigger);

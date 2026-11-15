@@ -314,7 +314,9 @@ class Handler(BaseHTTPRequestHandler):
             with STATE_LOCK:
                 st = dict(STATE)
             self._json({"state": st, "last_run": last,
-                        "recent_runs": STORE.recent_runs(30)})
+                        "recent_runs": STORE.recent_runs(30),
+                        "version": core.APP_VERSION,
+                        "built": core.build_stamp()})
         elif p == "/api/models":
             rows = STORE.latest_per_model(min_runs=STATE.get("dead_min_runs", 3))
             now = time.time()

@@ -25,6 +25,9 @@ DEFAULT_WORKERS = 8
 DEFAULT_MAX_TOKENS = 4096
 PROMPT = "Reply with exactly one word: pong"
 
+# Keep in sync with the git tag (vX.Y.Z). Shown in the dashboard header.
+APP_VERSION = "1.0.0"
+
 # Cloudflare-fronted hosts ban the default Python-urllib signature (error 1010),
 # so send a plain browser UA; without it whole providers look "down" when they are up.
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -44,6 +47,15 @@ else:
     APP_DIR = RES_DIR
 
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
+
+
+def build_stamp():
+    """Date this build was made: the exe's mtime when frozen, else core.py's."""
+    try:
+        target = sys.executable if FROZEN else os.path.abspath(__file__)
+        return datetime.date.fromtimestamp(os.path.getmtime(target)).isoformat()
+    except Exception:
+        return ""
 
 _DEFAULT_CONFIG = {
     "settings_path": "",

@@ -1,6 +1,7 @@
 {
   "app_name": "ModelPulse",
   "tagline": "монитор доступности моделей",
+  "version_word": "версия",
   "scan_now": "Проверить сейчас",
   "scan_once": "Разовый скан",
   "scan_auto": "Постоянный скан",
