@@ -152,7 +152,7 @@ def tool_status(args):
 TOOLS = [
     {
         "name": "models_status",
-        "description": ("Actively probe the BYOK models configured in Qoder and "
+        "description": ("Actively probe the BYOK models configured in your agent and "
                         "report which actually answer. mode=ping asks each model "
                         "for one word and only counts a real non-empty reply as "
                         "success (REPLY / EMPTY / FAIL); mode=list calls GET "
@@ -173,7 +173,7 @@ TOOLS = [
     },
     {
         "name": "models_providers",
-        "description": ("List the BYOK providers and models configured in Qoder "
+        "description": ("List the BYOK providers and models configured in your agent "
                         "without any network call (offline inventory)."),
         "inputSchema": {"type": "object", "properties": {}},
     },

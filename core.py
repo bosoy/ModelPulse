@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""ModelPulse core: read the BYOK providers Qoder knows about and probe them.
+"""ModelPulse core: read the BYOK providers your agent knows about and probe them.
 
-The agent's model registry IS ~/.qoder/settings.json -> "providers".
-Both the agent tool and this app read the same file; no IPC is involved.
-Source is ASCII-only on purpose (Python 3.14 on Windows reads .py as cp1251).
+The agent's model registry IS the settings file (default ~/.qoder/settings.json)
+-> "providers". Both the agent tool and this app read the same file; no IPC is
+involved. Source is ASCII-only on purpose (Python 3.14 on Windows reads .py as
+cp1251).
 """
 
 import json
@@ -76,7 +77,7 @@ def settings_path():
 
 
 def load_targets(path=None):
-    """Return (path, mtime, targets). Retries briefly: Qoder may be writing."""
+    """Return (path, mtime, targets). Retries briefly: the agent may be writing."""
     path = path or resolve_settings_path()
     last_err = None
     for attempt in range(4):

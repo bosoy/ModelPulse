@@ -1,6 +1,6 @@
 # ModelPulse
 
-Model availability monitor for Qoder BYOK providers, with an on-demand MCP tool, a web
+Model availability monitor for your AI agent's BYOK providers, with an on-demand MCP tool, a web
 dashboard, and a one-shot HTML report.
 
 ![ModelPulse results table](docs/screenshot-table.png)
@@ -11,7 +11,8 @@ dashboard, and a one-shot HTML report.
 
 ### What it is
 
-Qoder keeps your connected providers and models in `~/.qoder/settings.json` → `providers`.
+Your agent keeps its connected providers and models in a settings file — by default
+`~/.qoder/settings.json` → `providers`.
 ModelPulse reads **the same file** and actively probes every model with a `chat/completions`
 request ("reply with one word: pong"), verifying that **real answer text** came back, not just
 HTTP 200. No IPC, no plugin — the shared registry file is the whole integration contract.
@@ -141,7 +142,8 @@ no reports, no DB, no logs, no disk. The server binds to `127.0.0.1` only.
 
 ### Что это
 
-Qoder хранит подключённые тобой провайдеры и модели в `~/.qoder/settings.json` → `providers`.
+Агент хранит подключённые тобой провайдеры и модели в своём файле настроек — по умолчанию это
+`~/.qoder/settings.json` → `providers`.
 ModelPulse читает **тот же файл** и активно прозванивает каждую модель запросом
 `chat/completions` («ответь одним словом: pong»), проверяя, что пришёл **настоящий текст ответа**,
 а не просто HTTP 200. Никакого IPC и никаких плагинов — общий файл-реестр и есть «контракт стыковки».

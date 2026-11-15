@@ -53,7 +53,7 @@
   "scanning_word": "scanning...",
   "error_word": "error",
   "state_auto": "auto",
-  "mode_hint": "empty — the default Qoder file is used",
+  "mode_hint": "empty — the agent's default file is used",
   "run_once": "single pass",
   "source": "source",
   "timeout_word": "timeout",
