@@ -99,6 +99,8 @@ button.ghost:hover { color: var(--fg); border-color: var(--dim); }
 .src-row.on .dotmark { color: var(--accent); }
 .src-row .sname { color: var(--fg); font-weight: 500; }
 .src-row.on .sname { color: var(--accent); }
+.src-row.noprobe .sname { color: var(--dim); }
+.src-row .sname .note { font-weight: 400; font-size: 11px; }
 .src-row .spath {
   color: var(--dim); font-family: Consolas, "Cascadia Mono", monospace;
   font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

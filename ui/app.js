@@ -177,9 +177,9 @@ function renderSources(active) {
     return;
   }
   list.innerHTML = SOURCES.map((s) => `
-    <div class="src-row ${s.active ? "on" : ""}" data-id="${esc(s.id)}">
+    <div class="src-row ${s.active ? "on" : ""}${s.probeable ? "" : " noprobe"}" data-id="${esc(s.id)}">
       <span class="dotmark">${s.active ? "\u25cf" : "\u25cb"}</span>
-      <span class="sname">${esc(s.agent)}</span>
+      <span class="sname">${esc(s.agent)}${s.probeable ? "" : ' <span class="note">(не прозвонить)</span>'}</span>
       <span class="spath" title="${esc(s.path)}">${esc(s.path)}</span>
       <span class="scount">${s.model_count}</span>
       <span class="stag">${srcTag(s)}</span>
@@ -189,6 +189,14 @@ function renderSources(active) {
   list.querySelectorAll(".src-row").forEach((row) => {
     row.onclick = () => selectSource(row.dataset.id);
   });
+}
+
+function whyNotProbeable(s) {
+  if (!s) return t("empty_notprobeable", "cannot probe this source");
+  if (s.category === "registry") return t("empty_registry", "registry (metadata)");
+  if (!s.has_keys) return t("empty_nokeys", "no API key");
+  if (!s.probeable) return t("empty_notprobeable", "not OpenAI-compatible");
+  return t("empty_filter", "nothing to probe");
 }
 
 async function loadSources(deep) {
@@ -218,7 +226,13 @@ async function loadSources(deep) {
 }
 
 async function selectSource(id) {
-  $("#srcstate").textContent = "...";
+  const s = SOURCES.find((x) => x.id === id);
+  if (s && !s.probeable) {
+    $("#srcstate").textContent =
+      t("warn_notprobeable", "не прозвонить") + ": " + whyNotProbeable(s);
+  } else {
+    $("#srcstate").textContent = "...";
+  }
   try {
     const r = await fetch("/api/source", {
       method: "POST",
@@ -231,10 +245,10 @@ async function selectSource(id) {
     $("#srcstate").textContent = String(e);
     return;
   }
-  SOURCES.forEach((s) => { s.active = (s.id === id); });
+  SOURCES.forEach((x) => { x.active = (x.id === id); });
   renderSources(id);
   setActiveLabel(id);
-  $("#srcstate").textContent = t("scan_done", "done");
+  if (!(s && !s.probeable)) $("#srcstate").textContent = t("scan_done", "done");
   setTimeout(refresh, 800);
 }
 

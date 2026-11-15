@@ -87,5 +87,14 @@
   "source_type_registry": "реестр (не твой конфиг)",
   "agent_word": "агент",
   "list_sources_hint": "список найденных агентов",
-  "server_stale": "сервер старой версии — перезапусти его"
+  "server_stale": "сервер старой версии — перезапусти его",
+  "no_source": "источник не определён",
+  "empty_filter": "фильтр ничего не нашёл",
+  "empty_registry": "это реестр моделей (метаданные), а не твой агент",
+  "empty_nokeys": "у источника нет API-ключа",
+  "empty_notprobeable": "источник не OpenAI-совместим (anthropic/responses) — только список моделей",
+  "empty_hint": "выбери прозваниваемый агент: python once.py --list-sources",
+  "empty_hint2": "или смени active_source в панели",
+  "unknown_source": "неизвестный источник, беру",
+  "warn_notprobeable": "не прозвонить"
 }

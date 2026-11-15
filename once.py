@@ -59,6 +59,41 @@ def _short(text):
     return "".join(c if 32 <= ord(c) else " " for c in str(text)).strip()[:52]
 
 
+def _explain_empty(src, agent, args, T):
+    """Say why nothing is probeable instead of a bare 'nothing found'."""
+    print(T.get("app_name", "ModelPulse") + " - " + T.get("run_once", "single pass"))
+    if src is None:
+        print(T.get("no_source", "no source resolved"))
+        return
+    print("%s: %s" % (T.get("agent_word", "agent"), agent))
+    print("%s: %s" % (T.get("source", "source"), src.get("path")))
+    print("%s: %d   %s: %d"
+          % (T.get("models_word", "models"), src.get("model_count") or 0,
+             T.get("providers", "providers"), src.get("provider_count") or 0))
+    print("")
+    cat = src.get("category") or "agent"
+    if args.filter and (src.get("model_count") or 0) > 0:
+        print(T.get("empty_filter", "filter matched nothing") + " (filter=%r)" % args.filter)
+        return
+    if cat == "registry":
+        print(T.get("empty_registry",
+                    "this is a model registry (metadata), not a configured agent - "
+                    "nothing to probe here"))
+    elif not src.get("has_keys"):
+        print(T.get("empty_nokeys",
+                    "this source has no API key, so it cannot be probed"))
+    elif not src.get("probeable"):
+        print(T.get("empty_notprobeable",
+                    "this source is not OpenAI-compatible (e.g. anthropic/responses "
+                    "format) - ModelPulse can only list its models"))
+    else:
+        print(T.get("empty_filter", "filter matched nothing") + " (filter=%r)" % args.filter)
+    print("")
+    print(T.get("empty_hint",
+                "pick a probeable agent: python once.py --list-sources")
+          + "   |   " + T.get("empty_hint2", "or set active_source in the dashboard"))
+
+
 def console_table(results, s, elapsed, T):
     say("%-6s %-34s %-26s %7s %5s  %s"
         % (T.get("col_st", "st"), T.get("col_model", "model"),
@@ -120,6 +155,9 @@ def main():
         print("cannot read settings: %s" % e)
         return 2
     agent = src["agent"] if src else "Qoder"
+    if args.source and src and src["id"] != args.source:
+        print("%s %r -> %s" % (T.get("unknown_source", "unknown source, using"),
+                               args.source, src["id"]))
 
     if args.filter:
         f = args.filter.lower()
@@ -128,7 +166,7 @@ def main():
                    or f in t["host"].lower()]
 
     if not targets:
-        print(T.get("nothing", "nothing found") + " (filter=%r)" % args.filter)
+        _explain_empty(src, agent, args, T)
         return 1
 
     say("%s - %s   %s" % (T.get("app_name", "ModelPulse"),
