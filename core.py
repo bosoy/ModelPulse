@@ -7,10 +7,13 @@ involved. Source is ASCII-only on purpose (Python 3.14 on Windows reads .py as
 cp1251).
 """
 
+import datetime
+import email.utils
 import json
 import os
 import re
 import shutil
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -27,7 +30,19 @@ PROMPT = "Reply with exactly one word: pong"
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+FROZEN = getattr(sys, "frozen", False)
+
+# Frozen one-file builds have two roots: resources the exe carries inside
+# itself (ui/, lang packs) unpack to a temp dir that is wiped on exit, so
+# writable state (config.json, data/) must sit next to the exe instead.
+# Running from source, both roots are the script's own folder.
+if FROZEN:
+    RES_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(sys.executable)))
+    APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    RES_DIR = os.path.dirname(os.path.abspath(__file__))
+    APP_DIR = RES_DIR
+
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 _DEFAULT_CONFIG = {
@@ -241,6 +256,11 @@ def load_targets_for(source_id=None, deep=False):
 
 
 def http_json(url, key, payload=None, timeout=DEFAULT_TIMEOUT):
+    """-> (code, parsed_body, error_text, response_headers).
+
+    Headers are kept because they carry the exact moment a throttled model
+    becomes usable again (Retry-After, x-ratelimit-reset-*).
+    """
     headers = {"Authorization": "Bearer " + key, "Accept": "application/json",
                "User-Agent": USER_AGENT}
     data = None
@@ -253,6 +273,7 @@ def http_json(url, key, payload=None, timeout=DEFAULT_TIMEOUT):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", "replace")
             code = resp.getcode()
+            got = dict(resp.headers)
     except urllib.error.HTTPError as e:
         try:
             raw = e.read().decode("utf-8", "replace")
@@ -260,10 +281,10 @@ def http_json(url, key, payload=None, timeout=DEFAULT_TIMEOUT):
             raw = ""
         # keep enough of the body for the stated token cap to survive: a long
         # organization id used to push "Limit 1000" past the cut
-        return e.code, _maybe_json(raw), raw[:600]
+        return e.code, _maybe_json(raw), raw[:600], dict(e.headers or {})
     except Exception as e:
-        return None, None, type(e).__name__ + ": " + str(e)[:200]
-    return code, _maybe_json(body), None
+        return None, None, type(e).__name__ + ": " + str(e)[:200], {}
+    return code, _maybe_json(body), None, got
 
 
 def _maybe_json(text):
@@ -322,6 +343,160 @@ def otpm_limit(error):
         return 0
 
 
+# --- when a throttled model becomes usable again --------------------------
+
+_DUR_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(ms|minutes?|mins?|hours?|hrs?|seconds?|secs?|h|m|s)"
+    r"(?![a-z])", re.I)
+_UNIT_S = {"ms": 0.001, "h": 3600.0, "hr": 3600.0, "hrs": 3600.0,
+           "hour": 3600.0, "hours": 3600.0, "m": 60.0, "min": 60.0,
+           "mins": 60.0, "minute": 60.0, "minutes": 60.0, "s": 1.0,
+           "sec": 1.0, "secs": 1.0, "second": 1.0, "seconds": 1.0}
+_MAX_WAIT_S = 31 * 86400
+
+
+def _duration_seconds(text):
+    """'1m26.4s', '622ms', '4h 33m', '2 h 42 min' -> seconds."""
+    total = 0.0
+    for num, unit in _DUR_RE.findall(text or ""):
+        try:
+            total += float(num) * _UNIT_S.get(unit.lower(), 0.0)
+        except ValueError:
+            continue
+    return total
+
+
+def _seconds_until_utc(hour, minute):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    nxt = now.replace(hour=hour % 24, minute=minute % 60, second=0, microsecond=0)
+    if nxt <= now:
+        nxt += datetime.timedelta(days=1)
+    return (nxt - now).total_seconds()
+
+
+def _header_seconds(value):
+    """One rate-limit header value: seconds, a duration, or an absolute date."""
+    v = (value or "").strip()
+    if not v:
+        return 0.0
+    if re.fullmatch(r"\d+(?:\.\d+)?", v):
+        return float(v)
+    d = _duration_seconds(v)
+    if d > 0:
+        return d
+    try:
+        dt = email.utils.parsedate_to_datetime(v)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return max(0.0, dt.timestamp() - time.time())
+    except Exception:
+        pass
+    m = re.match(r"(\d{4}-\d\d-\d\d)[ T](\d\d:\d\d:\d\d)", v)
+    if m:
+        try:
+            dt = datetime.datetime.strptime(
+                m.group(1) + " " + m.group(2), "%Y-%m-%d %H:%M:%S")
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+            return max(0.0, dt.timestamp() - time.time())
+        except ValueError:
+            return 0.0
+    return 0.0
+
+
+def header_wait(headers):
+    """Seconds the provider itself asks us to wait; 0 when it says nothing.
+
+    Retry-After is the explicit instruction and wins. Otherwise both reset
+    windows matter (requests AND tokens), so take the longer one.
+    """
+    h = {str(k).lower(): v for k, v in (headers or {}).items()}
+    ms = h.get("retry-after-ms")
+    if ms:
+        try:
+            return max(0.0, float(ms) / 1000.0)
+        except (TypeError, ValueError):
+            pass
+    s = _header_seconds(h.get("retry-after"))
+    if s > 0:
+        return s
+    resets = [_header_seconds(h[k]) for k in
+              ("x-ratelimit-reset-requests", "x-ratelimit-reset-tokens",
+               "x-ratelimit-reset") if k in h]
+    resets = [x for x in resets if x > 0]
+    return max(resets) if resets else 0.0
+
+
+_TEXT_WAIT_RES = (
+    re.compile(r"resets?\s+in\s+([0-9]+\s*[hms][^.]{0,24})", re.I),
+    re.compile(r"in\s+(\d+\s*h\s*\d+\s*min)", re.I),
+    re.compile(r"(?:try again|retry|wait|available again|back)\s+in\s+"
+               r"([0-9]+\s*[hms][^.]{0,24})", re.I),
+    re.compile(r"retry[- ]after\s*:?\s*(\d+)", re.I),
+)
+_RESET_AT_RE = re.compile(r"resets?\s+at\s+(\d{1,2}):(\d{2})", re.I)
+_WINDOW_RE = re.compile(
+    r"per\s+(\d+)?\s*(second|minute|hour|day|min|sec)s?", re.I)
+_WINDOW_S = {"second": 1.0, "sec": 1.0, "minute": 60.0, "min": 60.0,
+             "hour": 3600.0, "day": 86400.0}
+
+
+def text_wait(error):
+    """Seconds until availability, read out of the provider's own words.
+
+    Covers 'It resets at 00:00 UTC, in 2 h 42 min', 'resets in 4h 33m',
+    'Rate limit reached: 5 requests per 1 minute(s)', 'try again in a few
+    seconds'. A bare per-minute window is an upper bound, not an exact wait.
+    """
+    s = note_text(error) or (error or "")
+    if not s:
+        return 0.0
+    for rx in _TEXT_WAIT_RES:
+        m = rx.search(s)
+        if m:
+            d = _duration_seconds(m.group(1))
+            if d > 0:
+                return d
+    m = _RESET_AT_RE.search(s)
+    if m:
+        return _seconds_until_utc(int(m.group(1)), int(m.group(2)))
+    if re.search(r"in a few seconds", s, re.I):
+        return 5.0
+    m = _WINDOW_RE.search(s)
+    if m:
+        try:
+            n = float(m.group(1)) if m.group(1) else 1.0
+        except ValueError:
+            n = 1.0
+        return n * _WINDOW_S.get(m.group(2).lower(), 0.0)
+    return 0.0
+
+
+# only throttles have a meaningful "come back later"; a bad key, a retired
+# model or a paid tier never heals on its own
+_WAIT_KINDS = ("quota", "limit", "otpm", "capacity", "concurrency")
+_RESET_RE = re.compile(r"resets?\s+(?:in|at)", re.I)
+_RESET_PROMISE_RE = re.compile(
+    r"resets?\s+(?:in|at)|available again|try again in", re.I)
+
+
+def wait_info(headers, error, status="fail", http_code=None):
+    """(seconds, kind) until the model is worth calling again, else (0, '')."""
+    if status == "reply":
+        return 0, ""
+    kind = classify_note(status, http_code, error)
+    secs = header_wait(headers) or text_wait(error)
+    if kind not in _WAIT_KINDS:
+        # a daily free allowance can arrive as 402 "paid"/"denied" while the
+        # provider still promises a reset - that promise is the availability
+        if secs > 0 and _RESET_PROMISE_RE.search(note_text(error) or ""):
+            kind = "quota"
+        else:
+            return 0, ""
+    if secs <= 0 or secs > _MAX_WAIT_S:
+        return 0, ""
+    return int(round(secs)), kind
+
+
 def _probe_once(target, url, timeout, max_tokens):
     payload = {
         "model": target["model"],
@@ -330,7 +505,7 @@ def _probe_once(target, url, timeout, max_tokens):
         "temperature": 0,
     }
     t0 = time.time()
-    code, body, err = http_json(url, target["key"], payload, timeout)
+    code, body, err, hdrs = http_json(url, target["key"], payload, timeout)
     ms = int((time.time() - t0) * 1000)
 
     status = "fail"
@@ -350,6 +525,7 @@ def _probe_once(target, url, timeout, max_tokens):
         error = err or ""
         if not error and isinstance(body, dict):
             error = str(body.get("error") or body)[:600]
+    wait_s, wait_kind = wait_info(hdrs, error, status, code)
     return {
         "model": target["model"],
         "host": target["host"],
@@ -360,6 +536,8 @@ def _probe_once(target, url, timeout, max_tokens):
         "reply": reply,
         "error": error,
         "limit_tpm": 0,
+        "wait_s": wait_s,
+        "wait_kind": wait_kind,
     }
 
 
@@ -527,6 +705,10 @@ def classify_note(status, http_code, error):
     # access / billing intent beats the transient rate-limit pattern
     if "check-in" in err or "check in" in msg:
         return "checkin"
+    # a used-up daily allowance arrives as 402/403 yet heals on its own: the
+    # provider names a reset, so this is a quota, not a denial
+    if _RESET_RE.search(msg) and ("usage" in msg or "used up" in msg):
+        return "quota"
     if ("free tier" in msg or "insufficient credit" in msg
             or "insufficient_credit" in err or "balance" in msg
             or "credits" in msg and http_code in (402, 403)):

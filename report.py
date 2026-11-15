@@ -16,15 +16,16 @@ from pathlib import Path
 
 import core
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(APP_DIR, "config.json")
+APP_DIR = core.APP_DIR
+RES_DIR = core.RES_DIR
+CONFIG_PATH = core.CONFIG_PATH
 REPORT_DIR = os.path.join(APP_DIR, "data", "reports")
 KEEP_REPORTS = 50
 LANGS = ("ru", "en")
 
 
 def _pack_path(lang):
-    return os.path.join(APP_DIR, "ui", "i18n.%s.json" % lang)
+    return os.path.join(RES_DIR, "ui", "i18n.%s.json" % lang)
 
 _CSS = """
 :root{--bg:#0e1116;--panel:#151a22;--panel2:#1b222c;--line:#263040;--fg:#d7dee8;
@@ -162,13 +163,36 @@ def render(results, meta, T=None):
         code = r.get("reason_code") or ""
         return _t(T, "dead_" + code, r.get("reason_text") or "")
 
+    def _fmt_wait(s):
+        s = max(0, int(round(s)))
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        uh = _t(T, "unit_h", "h")
+        um = _t(T, "unit_m", "m")
+        us = _t(T, "unit_s", "s")
+        if h:
+            return "%d %s %d %s" % (h, uh, m, um)
+        if m:
+            return "%d %s %d %s" % (m, um, sec, us)
+        return "%d %s" % (sec, us)
+
     def _note_label(r):
         if r["status"] == "reply":
             return r["reply"] or ""
         code = core.classify_note(r.get("status"), r.get("http_code"),
                                   r.get("error"))
-        return _t(T, "note_" + (code or "error"), "") or _short(
+        label = _t(T, "note_" + (code or "error"), "") or _short(
             core.note_text(r.get("error")), 120) or (r.get("error") or "")
+        # a static report cannot tick, so it states the wait as of the run
+        wait = r.get("wait_s") or 0
+        kind = r.get("wait_kind") or ""
+        if wait and kind:
+            if code == "limit":
+                label = _t(T, "note_limit_short", "request limit")
+            tpl = _t(T, "wait_" + kind, _t(T, "wait_generic", "back in {t}"))
+            # the cell is capped at 120 chars: keep room for the wait itself
+            label = _short(label, 90) + " - " + tpl.replace("{t}", _fmt_wait(wait))
+        return label
 
     # dead rows sink to the bottom of the main table: the report reads as
     # "everything is fine" first, then "here is the junk it found"

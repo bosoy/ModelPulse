@@ -48,7 +48,7 @@ def list_mode(targets, timeout):
     def one(t):
         url = t["root"] + "/models"
         t0 = time.time()
-        code, body, err = core.http_json(url, t["key"], None, timeout)
+        code, body, err, _ = core.http_json(url, t["key"], None, timeout)
         ms = int((time.time() - t0) * 1000)
         ids = []
         if code == 200 and isinstance(body, dict):

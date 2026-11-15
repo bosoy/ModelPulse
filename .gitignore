@@ -13,3 +13,7 @@ config.json
 .idea/
 Thumbs.db
 desktop.ini
+
+# build output of ModelPulse.spec (the exe itself is not committed)
+build/
+dist/

@@ -187,5 +187,17 @@
   "links_confirm_drop": "Delete this duplicate provider?",
   "links_dup_keeps": "The working provider with the same models stays.",
   "links_fixed": "address fixed",
-  "links_dropped": "duplicate deleted"
+  "links_dropped": "duplicate deleted",
+  "unit_h": "h",
+  "unit_m": "m",
+  "unit_s": "s",
+  "wait_quota": "back in {t}",
+  "wait_limit": "wait up to {t}",
+  "wait_capacity": "retry in {t}",
+  "wait_otpm": "window {t}",
+  "wait_concurrency": "free in {t}",
+  "wait_generic": "back in {t}",
+  "wait_ready": "ready to retry",
+  "wait_ready_at": "available again from",
+  "note_limit_short": "request limit"
 }

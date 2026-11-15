@@ -31,7 +31,7 @@ def load_i18n(lang="ru"):
     lang = lang if lang in LANGS else "ru"
     for cand in (lang, "ru"):
         try:
-            with open(os.path.join(APP_DIR, "ui", "i18n.%s.json" % cand),
+            with open(os.path.join(core.RES_DIR, "ui", "i18n.%s.json" % cand),
                       "r", encoding="utf-8") as fh:
                 return json.load(fh)
         except Exception:

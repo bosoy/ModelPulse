@@ -135,18 +135,60 @@ function esc(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
-function note(r) {
-  if (r.status === "reply") return `<span class="note mono">${esc(r.reply || "")}</span>`;
+// "come back later" promised by the provider: live countdown to ready_ts
+function fmtWait(s) {
+  s = Math.max(0, Math.round(s));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  if (h) return h + " " + t("unit_h", "h") + " " + m + " " + t("unit_m", "m");
+  if (m) return m + " " + t("unit_m", "m") + " " + sec + " " + t("unit_s", "s");
+  return sec + " " + t("unit_s", "s");
+}
+
+function waitText(ready, kind) {
+  const left = ready - Date.now() / 1000;
+  if (left <= 0) return t("wait_ready", "ready to retry");
+  const tpl = t("wait_" + (kind || "generic"), t("wait_generic", "back in {t}"));
+  return tpl.replace("{t}", fmtWait(left));
+}
+
+function waitPhrase(r) {
+  if (!r.wait_s || !r.ready_ts) return "";
+  const kind = r.wait_kind || "generic";
+  return `<span class="wait" data-ready="${r.ready_ts}" data-wkind="${esc(kind)}">`
+    + esc(waitText(r.ready_ts, kind)) + `</span>`;
+}
+
+function tickWaits() {
+  document.querySelectorAll(".wait[data-ready]").forEach((el) => {
+    const ready = Number(el.dataset.ready);
+    el.textContent = waitText(ready, el.dataset.wkind);
+    el.classList.toggle("ready", ready - Date.now() / 1000 <= 0);
+  });
+}
+
+// base note label, shared by the table and the history drawer
+function baseNote(r) {
   const code = r.note_code || (r.status === "empty" ? "empty" : "error");
   let label = t("note_" + code, "");
   if (code === "otpm" && r.tpm_limit) {
     label = t("note_otpm_n", "output token cap {n}/min - long chat answers will fail")
       .replace("{n}", r.tpm_limit);
   }
+  // the countdown already says "retry later"; do not say it twice
+  if (code === "limit" && r.wait_s) label = t("note_limit_short", "request limit");
+  return { code, label };
+}
+
+function note(r) {
+  if (r.status === "reply") return `<span class="note mono">${esc(r.reply || "")}</span>`;
+  const { code, label } = baseNote(r);
   const raw = r.note_text || r.error || "";
-  const title = raw ? esc(label ? label + " - " + raw : raw) : esc(label || code);
-  return `<span class="note ${r.status === "empty" ? "reason" : "err"}" title="${title}">`
-    + esc(label || raw || code) + `</span>`;
+  const wait = waitPhrase(r);
+  let title = raw ? (label ? label + " - " + raw : raw) : (label || code);
+  if (wait) title += "\n" + t("wait_ready_at", "available again at") + " "
+    + new Date(r.ready_ts * 1000).toLocaleString();
+  return `<span class="note ${r.status === "empty" ? "reason" : "err"}" title="${esc(title)}">`
+    + esc(label || raw || code) + (wait ? " &mdash; " + wait : "") + `</span>`;
 }
 
 // reason texts live in the lang pack under dead_<code>; fall back to server text
@@ -735,16 +777,14 @@ async function openDrawer(model, host) {
         ${u.empty} ${t("empty_word", "empty")}, ${u.fail} ${t("fail_word", "failed")}</span></div>`
     : `<div class="drow"><span class="t">${t("uptime_24h", "uptime 24h")}</span>
         <span>${t("no_data", "no data")}</span></div>`;
-  const rows = (j.probes || []).map((p) => {
-    let lab = t("note_" + (p.note_code || "error"), "");
-    if (p.note_code === "otpm" && p.tpm_limit) {
-      lab = t("note_otpm_n", "output token cap {n}/min - long chat answers will fail")
-        .replace("{n}", p.tpm_limit);
-    }
+  const rows = (j.probes || []).map((p, idx) => {
+    const lab = baseNote(p).label;
     const detail = p.status === "reply" ? esc(p.reply || "")
       : esc(lab || p.note_text || p.error || "HTTP " + (p.http_code || "?"));
+    // only the newest probe can still be waiting; older ones are history
+    const wait = idx === 0 ? waitPhrase(p) : "";
     return `<div class="drow"><span class="t">${fmtDate(p.ts)}</span>
-      <span>${pill(p.status)} ${fmtMs(p.ms)} ${detail}</span></div>`;
+      <span>${pill(p.status)} ${fmtMs(p.ms)} ${detail}${wait ? " &mdash; " + wait : ""}</span></div>`;
   }).join("");
   $("#d-body").innerHTML = head
     + `<div style="margin-top:10px">${rows || t("no_history", "no history")}</div>`;
@@ -903,4 +943,5 @@ if (window.matchMedia) {
   refresh();
   loadSources(false);
   setInterval(refresh, 10000);
+  setInterval(tickWaits, 1000);
 })();

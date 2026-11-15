@@ -133,6 +133,50 @@ message would pass. When the reply names such a cap, the probe **retries at the 
 the note shows it: `output token cap 1000/min - long chat answers will fail`. So a model that answers
 `pong` here but dies on a long answer in chat is reported with its real ceiling, not as healthy.
 
+### When a model comes back
+
+A throttled model is not dead - it is waiting. Providers say so themselves, in two places:
+
+- **headers**: `Retry-After` (seconds or an HTTP date), `retry-after-ms`,
+  `x-ratelimit-reset-requests` / `-tokens` (values like `1m26.4s`, `60s`, `622ms`);
+- **words**: "It resets at 00:00 UTC, in 2 h 42 min", "resets in 4h 33m",
+  "5 requests per 1 minute(s)", "try again in a few seconds".
+
+ModelPulse reads both (the header wins, it is exact), stores the wait in history
+(`probes.wait_s`, `wait_kind`) and appends a **live countdown** to the note:
+`quota exhausted - back in 2 h 27 m`, ticking every second; at zero it turns green and reads
+`ready to retry`. Hovering shows the local date and time it becomes available. The same countdown
+appears on the newest row of a model's history drawer. The one-shot HTML report cannot tick, so it
+states the wait as of the run.
+
+Only throttles get a countdown: daily quota, request limit, output-token cap, overload, concurrency.
+A bad key, a retired model or a paid tier never heals on its own, so no time is invented for them.
+A used-up daily allowance sometimes arrives as `402`/`403`; when the provider promises a reset it is
+reported as a quota with a countdown, not as a denial.
+
+Existing databases keep working: the two columns are added by migration, all history is preserved,
+and countdowns appear from the next pass.
+
+### Standalone exe
+
+`ModelPulse.exe` runs without Python installed. Double-click it: the dashboard opens in your browser
+at `http://127.0.0.1:8765` and the window is yours to close — the monitor keeps serving until you
+quit the exe. There is no console window; if it cannot start (the port is taken, for example) the
+reason is written to `data/modelpulse.log` and shown in a message box.
+
+The exe carries the dashboard inside itself, while **`config.json` and `data/` live next to the
+exe** — put it in its own folder. Probe history is not shared with a source copy: each folder keeps
+its own `data/modelpulse.db`. Keys are still only read from your agent's settings file.
+
+Build it with PyInstaller (`ModelPulse.spec` is in the repo):
+
+```bash
+pip install pyinstaller
+pyinstaller --clean --noconfirm ModelPulse.spec   # -> dist/ModelPulse.exe
+```
+
+Command-line flags still work (`--port`, `--interval`, `--open` / `--no-open`, `--scan-on-start`).
+
 ### Sources: agents on this machine
 
 ModelPulse can find **other agents and clients** installed on the PC and pull models from them.
@@ -323,6 +367,52 @@ Groq: 1000). Запрос на 4096 тогда падает с `Request too larg
 лимите**, а примечание показывает его: `лимит 1000 токенов/мин на ответ — длинный ответ в чате не
 пройдёт`. Модель, которая отвечает здесь `pong`, но умирает на длинном ответе в чате, показывается
 со своим реальным потолком, а не как здоровая.
+
+### Когда модель вернётся
+
+Модель под лимитом — не мёртвая, она ждёт. Провайдеры сами говорят, когда её можно звать снова,
+и в двух местах:
+
+- **заголовки**: `Retry-After` (секунды или HTTP-дата), `retry-after-ms`,
+  `x-ratelimit-reset-requests` / `-tokens` (значения вида `1m26.4s`, `60s`, `622ms`);
+- **слова**: «It resets at 00:00 UTC, in 2 h 42 min», «resets in 4h 33m»,
+  «5 requests per 1 minute(s)», «try again in a few seconds».
+
+ModelPulse читает оба источника (заголовок главнее — он точный), хранит ожидание в истории
+(`probes.wait_s`, `wait_kind`) и дописывает к примечанию **живой обратный отсчёт**:
+`квота исчерпана — снова через 2 ч 27 мин`, тикает каждую секунду; на нуле зеленеет и пишет
+`можно пробовать`. По наведению видно локальные дату и время, когда модель станет доступна. Тот же
+отсчёт есть у самой свежей строки в истории модели. Разовый HTML-отчёт тикать не умеет, поэтому
+пишет ожидание на момент прогона.
+
+Отсчёт получают только throttles: дневная квота, лимит запросов, потолок токенов на ответ,
+перегруз, конкуренция. Неверный ключ, снятая с вооружения модель или платный тариф сами не
+«вылечатся» — время для них не выдумывается. Исчерпанная дневная бесплатная норма иногда приходит
+как `402`/`403`; если провайдер обещает сброс, это показывается как квота с отсчётом, а не как отказ.
+
+Старые базы продолжают работать: две колонки добавляются миграцией, вся история сохраняется,
+отсчёты появляются со следующего прогона.
+
+### Отдельный exe
+
+`ModelPulse.exe` работает без установленного Python. Двойной клик — и панель открывается в браузере
+на `http://127.0.0.1:8765`; окна консоли нет, и монитор продолжает работать, пока не закроешь сам
+exe. Если он не смог стартовать (например, порт занят), причина пишется в `data/modelpulse.log` и
+показывается в окошке с сообщением.
+
+Панель exe несёт внутри себя, а **`config.json` и `data/` лежат рядом с exe** — положи его в
+отдельную папку. История прозвонов не делится с копией из исходников: у каждой папки своя
+`data/modelpulse.db`. Ключи по-прежнему читаются только из файла настроек твоего агента.
+
+Собрать: PyInstaller, `ModelPulse.spec` уже в репозитории.
+
+```bash
+pip install pyinstaller
+pyinstaller --clean --noconfirm ModelPulse.spec   # -> dist/ModelPulse.exe
+```
+
+Флаги командной строки работают и у exe: `--port`, `--interval`, `--open` / `--no-open`,
+`--scan-on-start`.
 
 ### Источники: агенты на компьютере
 

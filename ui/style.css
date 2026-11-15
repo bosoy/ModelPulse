@@ -309,6 +309,9 @@ td.act button.act + button.act { margin-left: 4px; }
 .note { color: var(--dim); font-size: 12px; }
 .note.err { color: var(--fail); }
 .note.reason { color: var(--empty); }
+/* tabular digits keep a ticking countdown from shifting the column */
+.wait { color: var(--empty); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wait.ready { color: var(--up); }
 .upbar { display: inline-flex; gap: 3px; align-items: center; }
 .upbar .u { color: var(--up); } .upbar .e { color: var(--empty); } .upbar .f { color: var(--fail); }
 .spark { display: flex; gap: 1px; align-items: flex-end; height: 16px; }

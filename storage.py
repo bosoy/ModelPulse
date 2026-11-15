@@ -8,7 +8,7 @@ import time
 
 import core
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "modelpulse.db")
+DB_PATH = os.path.join(core.APP_DIR, "data", "modelpulse.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS probes (
     ms          INTEGER,
     reply       TEXT,
     error       TEXT,
+    wait_s      INTEGER DEFAULT 0,
+    wait_kind   TEXT,
     FOREIGN KEY (run_id) REFERENCES runs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_probes_model_ts ON probes(model, ts);
@@ -59,7 +61,15 @@ class Store(object):
         self._conn.row_factory = sqlite3.Row
         with self._lock:
             self._conn.executescript(SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self):
+        """Add columns introduced after a database was first created."""
+        have = {r["name"] for r in self._conn.execute("PRAGMA table_info(probes)")}
+        for col, decl in (("wait_s", "INTEGER DEFAULT 0"), ("wait_kind", "TEXT")):
+            if col not in have:
+                self._conn.execute("ALTER TABLE probes ADD COLUMN %s %s" % (col, decl))
 
     # -- writes ---------------------------------------------------------
     def start_run(self, source, trigger, started_at=None):
@@ -81,12 +91,14 @@ class Store(object):
 
     def add_probes(self, run_id, results):
         rows = [(run_id, time.time(), r["model"], r["host"], r["provider_id"],
-                 r["status"], r["http_code"], r["ms"], r["reply"], r["error"])
+                 r["status"], r["http_code"], r["ms"], r["reply"], r["error"],
+                 r.get("wait_s") or 0, r.get("wait_kind") or "")
                 for r in results]
         with self._lock:
             self._conn.executemany(
                 "INSERT INTO probes (run_id, ts, model, host, provider_id, status,"
-                " http_code, ms, reply, error) VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+                " http_code, ms, reply, error, wait_s, wait_kind)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             self._conn.commit()
 
     # -- hidden (muted) models -------------------------------------------
@@ -154,18 +166,19 @@ class Store(object):
     def _history(self, model, host, limit=40):
         with self._lock:
             rows = self._conn.execute(
-                "SELECT ts, status, ms, http_code, error FROM probes "
+                "SELECT ts, status, ms, http_code, error, wait_s, wait_kind FROM probes "
                 "WHERE model=? AND host=? ORDER BY ts DESC LIMIT ?",
                 (model, host, limit)).fetchall()
         return [{"ts": r["ts"], "status": r["status"], "ms": r["ms"],
-                 "http_code": r["http_code"], "error": r["error"]}
+                 "http_code": r["http_code"], "error": r["error"],
+                 "wait_s": r["wait_s"] or 0, "wait_kind": r["wait_kind"] or ""}
                 for r in reversed(rows)]
 
     def model_detail(self, model, host):
         with self._lock:
             rows = self._conn.execute(
-                "SELECT ts, status, ms, http_code, reply, error FROM probes "
-                "WHERE model=? AND host=? ORDER BY ts DESC LIMIT 200",
+                "SELECT ts, status, ms, http_code, reply, error, wait_s, wait_kind "
+                "FROM probes WHERE model=? AND host=? ORDER BY ts DESC LIMIT 200",
                 (model, host)).fetchall()
         return [dict(r) for r in rows]
 

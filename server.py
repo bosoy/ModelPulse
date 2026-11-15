@@ -15,9 +15,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import core
 import locate
+import report
 import storage
 
-UI_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui")
+UI_DIR = os.path.join(core.RES_DIR, "ui")
 STATE = {
     "scanning": False,
     "last_scan_started": None,
@@ -183,6 +184,10 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    # a windowed exe has no stderr, so the inherited writer would crash
+    def log_error(self, fmt, *args):
+        pass
+
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=True).encode("utf-8")
         self.send_response(code)
@@ -320,6 +325,9 @@ class Handler(BaseHTTPRequestHandler):
                     r.get("status"), r.get("http_code"), r.get("error"))
                 r["note_text"] = core.note_text(r.get("error"))
                 r["tpm_limit"] = core.otpm_limit(r.get("error"))
+                r["wait_s"] = int(r.get("wait_s") or 0)
+                r["wait_kind"] = r.get("wait_kind") or ""
+                r["ready_ts"] = (r.get("ts") or 0) + r["wait_s"] if r["wait_s"] else 0
             self._json({"models": rows})
         elif p.startswith("/api/model/"):
             from urllib.parse import unquote, parse_qs
@@ -332,6 +340,9 @@ class Handler(BaseHTTPRequestHandler):
                     pr.get("status"), pr.get("http_code"), pr.get("error"))
                 pr["note_text"] = core.note_text(pr.get("error"))
                 pr["tpm_limit"] = core.otpm_limit(pr.get("error"))
+                pr["wait_s"] = int(pr.get("wait_s") or 0)
+                pr["wait_kind"] = pr.get("wait_kind") or ""
+                pr["ready_ts"] = (pr.get("ts") or 0) + pr["wait_s"] if pr["wait_s"] else 0
             self._json({"model": model, "host": host,
                         "probes": probes,
                         "uptime_24h": STORE.uptime(model, host, time.time() - 86400)})
@@ -534,13 +545,95 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
 
+def _open_dashboard(url):
+    """Best-effort: show the running dashboard in the user's browser."""
+    try:
+        exe, fam = report.browser_exe()
+    except Exception:
+        exe, fam = "", ""
+    if exe:
+        flag = "-new-window" if fam == "firefox" else "--new-window"
+        for cmd in ([exe, flag, url], [exe, url]):
+            try:
+                subprocess.Popen(cmd)
+                return
+            except Exception:
+                continue
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(url)  # noqa: S606
+            return
+        import webbrowser
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+def _port_busy(host, port):
+    """True when someone already listens on host:port.
+
+    A plain bind is not enough on Windows: SO_REUSEADDR lets a second process
+    take the same port and then silently never receive a connection, which is
+    exactly the kind of quiet failure a double-clicked window cannot explain.
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.settimeout(1.0)
+        return s.connect_ex((host if host != "0.0.0.0" else "127.0.0.1", port)) == 0
+    except Exception:
+        return False
+    finally:
+        s.close()
+
+
+def _fatal(text):
+    """A windowed exe has no console: log the reason and show a message box.
+
+    Without this a failed launch (port taken, no writable folder) would be
+    completely silent.
+    """
+    try:
+        print(text)
+    except Exception:
+        pass
+    try:
+        d = os.path.join(core.APP_DIR, "data")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "modelpulse.log"), "a", encoding="utf-8") as fh:
+            fh.write("%s  %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"),
+                                   text.replace("\n", " | ")))
+    except Exception:
+        pass
+    if core.FROZEN:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, text, "ModelPulse", 0x30)
+        except Exception:
+            pass
+
+
 def main():
+    # windowed builds (--noconsole) have no std streams at all; give them a
+    # sink so a stray print can never take the server down
+    if core.FROZEN:
+        for name in ("stdout", "stderr"):
+            if getattr(sys, name, None) is None:
+                setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--interval", type=int, default=900)
     ap.add_argument("--scan-on-start", action="store_true",
                     help="probe once at launch and turn continuous scanning on")
+    # a double-clicked exe has no console to read, so it opens the panel itself;
+    # running from source keeps the old quiet behaviour
+    ap.add_argument("--open", dest="open_browser", action="store_true",
+                    default=core.FROZEN,
+                    help="open the dashboard in the browser at launch")
+    ap.add_argument("--no-open", dest="open_browser", action="store_false",
+                    help="never open a browser")
     args = ap.parse_args()
 
     global STORE
@@ -565,14 +658,27 @@ def main():
             STATE["auto"] = True
         AUTO.set()
 
-    srv = ThreadingHTTPServer((args.host, args.port), Handler)
-    print("ModelPulse on http://%s:%d  (interval %ds)" % (args.host, args.port,
-                                                         STATE["interval"]))
+    if _port_busy(args.host, args.port):
+        _fatal("Port %d is already in use - another ModelPulse is running.\n"
+               "Open http://%s:%d , or close the other window and start again."
+               % (args.port, args.host, args.port))
+        return 1
+    try:
+        srv = ThreadingHTTPServer((args.host, args.port), Handler)
+    except OSError as e:
+        _fatal("Cannot start the server on port %d: %s" % (args.port, e))
+        return 1
+    url = "http://%s:%d" % (args.host, args.port)
+    print("ModelPulse on %s  (interval %ds)" % (url, STATE["interval"]))
+    # the window opens a moment later so the socket is already listening
+    if args.open_browser:
+        threading.Timer(1.0, _open_dashboard, args=(url,)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

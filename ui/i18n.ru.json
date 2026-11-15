@@ -187,5 +187,17 @@
   "links_confirm_drop": "Удалить этот дубль провайдера?",
   "links_dup_keeps": "Рабочий провайдер с теми же моделями остаётся.",
   "links_fixed": "адрес исправлен",
-  "links_dropped": "дубль удалён"
+  "links_dropped": "дубль удалён",
+  "unit_h": "ч",
+  "unit_m": "мин",
+  "unit_s": "с",
+  "wait_quota": "снова через {t}",
+  "wait_limit": "подожди до {t}",
+  "wait_capacity": "попробуй через {t}",
+  "wait_otpm": "окно {t}",
+  "wait_concurrency": "освободится через {t}",
+  "wait_generic": "снова через {t}",
+  "wait_ready": "можно пробовать",
+  "wait_ready_at": "доступна снова с",
+  "note_limit_short": "лимит запросов"
 }
