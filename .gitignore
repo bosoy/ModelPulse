@@ -1,0 +1,15 @@
+# byte-compiled / caches
+__pycache__/
+*.py[cod]
+
+# local runtime data: probe history, rendered reports, text report
+data/
+
+# local settings (path to your settings.json, browser override)
+config.json
+
+# editor / OS noise
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

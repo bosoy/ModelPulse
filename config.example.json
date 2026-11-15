@@ -1,0 +1,9 @@
+{
+  "settings_path": "",
+  "interval_seconds": 900,
+  "max_tokens": 16,
+  "timeout_seconds": 30,
+  "workers": 8,
+  "language": "ru",
+  "browser": ""
+}

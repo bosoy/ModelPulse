@@ -1,0 +1,14 @@
+# .cmd/.bat must keep CRLF or cmd.exe misreads them
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# source and docs: LF in the repository
+*.py   text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css  text eol=lf
+*.js   text eol=lf
+
+# binary assets
+*.png binary

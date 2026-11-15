@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ModelPulse</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <span class="dot" id="livedot"></span>
+    <h1>ModelPulse</h1>
+    <span class="sub" data-i18n="tagline"></span>
+  </div>
+  <div class="controls">
+    <label><span data-i18n="interval"></span>
+      <input id="interval" type="number" min="60" step="60" value="900">
+      <span class="unit" data-i18n="seconds"></span>
+    </label>
+    <label><span data-i18n="max_tokens"></span>
+      <input id="maxtok" type="number" min="1" step="1" value="16">
+    </label>
+    <button id="saveset" class="ghost" data-i18n="save"></button>
+    <button id="runnow" class="primary" data-i18n="scan_now"></button>
+  </div>
+</header>
+
+<section class="cards">
+  <div class="card"><div class="k" data-i18n="card_reply"></div><div class="v" id="c-reply">-</div></div>
+  <div class="card"><div class="k" data-i18n="card_empty"></div><div class="v" id="c-empty">-</div></div>
+  <div class="card"><div class="k" data-i18n="card_fail"></div><div class="v" id="c-fail">-</div></div>
+  <div class="card"><div class="k" data-i18n="card_total"></div><div class="v" id="c-total">-</div></div>
+  <div class="card wide">
+    <div class="k" data-i18n="card_source"></div>
+    <div class="v small" id="c-source">-</div>
+    <div class="meta" id="c-source-meta"></div>
+  </div>
+</section>
+
+<section class="pathbar">
+  <label data-i18n="settings_path_label"></label>
+  <input id="setpath" type="text" placeholder="">
+  <button id="savepath" class="ghost" data-i18n="save_path"></button>
+  <button id="openapp" class="ghost" data-i18n="open_folder"></button>
+  <span class="status" id="pathstate"></span>
+</section>
+
+<section class="bar">
+  <input id="filter" type="search">
+  <div class="chips" id="chips">
+    <button data-f="all" class="chip on" data-i18n="chip_all"></button>
+    <button data-f="reply" class="chip" data-i18n="chip_reply"></button>
+    <button data-f="empty" class="chip" data-i18n="chip_empty"></button>
+    <button data-f="fail" class="chip" data-i18n="chip_fail"></button>
+  </div>
+  <span class="status" id="scanstate"></span>
+</section>
+
+<table id="grid">
+  <thead>
+    <tr>
+      <th class="s" data-i18n="col_st"></th>
+      <th data-sort="model" data-i18n="col_model"></th>
+      <th data-sort="host" data-i18n="col_host"></th>
+      <th data-sort="ms" class="num" data-i18n="col_ms"></th>
+      <th data-sort="http_code" class="num" data-i18n="col_http"></th>
+      <th data-i18n="col_uptime"></th>
+      <th data-i18n="col_spark"></th>
+      <th data-i18n="col_note"></th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<footer>
+  <span id="foot"></span>
+  <span class="sep">|</span>
+  <span data-i18n="legend"></span>
+</footer>
+
+<div id="drawer" class="drawer hidden">
+  <div class="drawer-head">
+    <h2 id="d-title">model</h2>
+    <button id="d-close" class="ghost" data-i18n="close"></button>
+  </div>
+  <div class="drawer-body" id="d-body"></div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
