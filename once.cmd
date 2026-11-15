@@ -10,8 +10,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo Running one probe pass over all configured models...
+echo Running one probe pass over the configured agent...
 echo The HTML report will open in a separate browser window.
+echo Tip: "python once.py --list-sources" shows the agents found on this PC.
 echo.
 python once.py %*
 echo.

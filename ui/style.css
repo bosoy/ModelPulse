@@ -69,6 +69,51 @@ button.ghost:hover { color: var(--fg); border-color: var(--dim); }
   color: var(--fg); border-radius: 6px; padding: 5px 8px; font-size: 12px;
 }
 .pathbar .status { color: var(--up); }
+
+.sources { padding: 2px 18px 10px; }
+.src-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.src-head .badge {
+  display: inline-block; min-width: 18px; text-align: center; font-size: 11px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+  padding: 0 6px; margin-left: 4px; color: var(--dim);
+}
+.src-head .caret { display: inline-block; transition: transform .12s; color: var(--dim); }
+.sources.open .caret { transform: rotate(90deg); }
+.src-active { color: var(--fg); font-size: 12px; }
+.src-active b { color: var(--accent); font-weight: 600; }
+.deepbox { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.src-list {
+  margin-top: 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); overflow: hidden;
+}
+.src-list.hidden { display: none; }
+.src-row {
+  display: grid; grid-template-columns: 20px 170px 1fr 90px 210px;
+  gap: 10px; align-items: center; padding: 8px 12px; cursor: pointer;
+  border-bottom: 1px solid #1c2430; font-size: 12px;
+}
+.src-row:last-child { border-bottom: none; }
+.src-row:hover { background: #12181f; }
+.src-row.on { background: #17243a; }
+.src-row .dotmark { color: var(--dim); font-size: 11px; text-align: center; }
+.src-row.on .dotmark { color: var(--accent); }
+.src-row .sname { color: var(--fg); font-weight: 500; }
+.src-row.on .sname { color: var(--accent); }
+.src-row .spath {
+  color: var(--dim); font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.src-row .scount { color: var(--fg); text-align: right; font-variant-numeric: tabular-nums; }
+.src-row .stag { font-size: 11px; display: flex; gap: 6px; flex-wrap: wrap; }
+.tag {
+  padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 600;
+  letter-spacing: .3px; border: 1px solid var(--line); color: var(--dim);
+}
+.tag.ok { color: var(--up); border-color: #1f5c39; background: #12351f; }
+.tag.keys { color: var(--empty); border-color: #5c4a1f; background: #3a2f0e; }
+.tag.meta { color: var(--dim); }
+.tag.bad { color: var(--fail); border-color: #5c2420; background: #3a1715; }
+.src-note { color: var(--dim); font-size: 11px; padding: 6px 12px; }
 .chips { display: flex; gap: 6px; }
 .chip {
   background: var(--panel); color: var(--dim); border: 1px solid var(--line);

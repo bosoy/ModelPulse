@@ -89,10 +89,24 @@ def main():
     ap.add_argument("--max-tokens", type=int, default=None)
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--lang", default="ru")
+    ap.add_argument("--source", default="", help="agent source id (see --list-sources)")
+    ap.add_argument("--deep", action="store_true", help="deep scan when listing sources")
+    ap.add_argument("--list-sources", action="store_true",
+                    help="print discovered agents and exit")
     ap.add_argument("--no-save", action="store_true")
     ap.add_argument("--no-open", action="store_true",
                     help="do not launch a browser window")
     args = ap.parse_args()
+
+    if args.list_sources:
+        import discover
+        found = discover.discover(deep=args.deep)
+        print(discover.summary_line(found))
+        for s in found:
+            print("  %-16s %-22s models=%-5d probe=%-5s keys=%-5s %s"
+                  % ("[" + s["format"] + "]", s["agent"], s["model_count"],
+                     s["probeable"], s["has_keys"], s["path"]))
+        return 0
 
     cfg = core.load_config()
     timeout = args.timeout if args.timeout is not None else float(cfg.get("timeout_seconds") or 30)
@@ -100,10 +114,12 @@ def main():
     workers = args.workers if args.workers is not None else int(cfg.get("workers") or 8)
 
     try:
-        path, mtime, targets = core.load_targets()
+        src, path, mtime, targets = core.load_targets_for(args.source or None,
+                                                          deep=args.deep)
     except Exception as e:
         print("cannot read settings: %s" % e)
         return 2
+    agent = src["agent"] if src else "Qoder"
 
     if args.filter:
         f = args.filter.lower()
@@ -118,6 +134,7 @@ def main():
     say("%s - %s   %s" % (T.get("app_name", "ModelPulse"),
                           T.get("run_once", "single pass"),
                           time.strftime("%Y-%m-%d %H:%M:%S")))
+    say("%s: %s" % (T.get("agent_word", "agent"), agent))
     say("%s: %s" % (T.get("source", "source"), path))
     say("%s: %d   %s: %gs   %s: %d"
         % (T.get("models_word", "models"), len(targets),
@@ -148,6 +165,7 @@ def main():
         meta = {
             "ts": time.time(),
             "source": path,
+            "agent": agent,
             "nmodels": len(targets),
             "nproviders": len({t["provider_id"] for t in targets}),
             "timeout": timeout,

@@ -88,6 +88,38 @@ Opera, Yandex, Firefox) → ассоциация `.html`. **Chrome не обяз
 
 Отчёт самодостаточен: весь CSS внутри, сервер не нужен, открывается двойным кликом.
 
+### Источники: агенты на компьютере
+
+ModelPulse умеет искать на ПК **другие агенты и клиенты** и брать модели из них. Есть вкладка
+«Источники» в веб-панели и команда в консоли:
+
+```bash
+python once.py --list-sources          # список найденных агентов
+python once.py --list-sources --deep   # + обход профиля
+python once.py --source zcode          # разовый прогон по выбранному агенту
+```
+
+**Клиент сам выбирает, с каким агентом работать**: в панели щёлкни строку агента — он станет
+активным, и «Проверить сейчас» пойдёт по его моделям. Выбор сохраняется в `config.json`
+(`active_source`) и переживает перезапуск.
+
+Каталог известных агентов: Qoder, zcode, Codex CLI, free-claude-code, Cline, Claude Code,
+Gemini CLI, Copilot CLI, LM Studio, Ollama, Continue, Aider. Глубокий поиск (`--deep`, флажок
+в панели) дополнительно обходит профиль и распознаёт чужие конфиги по форме провайдеров/моделей.
+
+Источники делятся на три вида:
+
+- **агент** — реальный клиент, ты им пользуешься; у части есть ключ и OpenAI-совместимый адрес,
+  такие можно **прозванивать** (например Qoder);
+- **каталог** — список моделей рядом с агентом (напр. `codex-model-catalog.json`);
+- **реестр** — метаданные вроде `~/.cache/kilo/models.json`, это **не твой конфиг**, только
+  справочник имён моделей; помечается явно и никогда не прозванивается.
+
+**Безопасность.** Инвентарь **не показывает значения ключей** — только флаг «есть ключ» и его
+длину. Ключи читаются в память лишь в момент прозвона и никуда не пишутся. Обход ограничен
+(глубина 5, до 40000 файлов, лимит размера, пропуск кэшей и системных папок) — это не сплошное
+сканирование диска.
+
 ### MCP-коннектор
 
 В `~/.qoder/settings.json` → `mcpServers` добавь stdio-сервер:
@@ -162,6 +194,33 @@ in this order: `MODELPULSE_BROWSER` env → `config.json → browser` → the Wi
 
 `data/reports/` gets `report-<timestamp>.html` per run plus `last-run.html` (always the newest);
 the 50 latest are kept. Each report is self-contained (inline CSS, no server).
+
+### Sources: agents on this machine
+
+ModelPulse can find **other agents and clients** installed on the PC and pull models from them.
+There is a "Sources" tab in the dashboard and a console command:
+
+```bash
+python once.py --list-sources          # agents found on this PC
+python once.py --list-sources --deep   # plus a profile walk
+python once.py --source zcode          # one pass against the chosen agent
+```
+
+**The user picks which agent to work with**: click an agent row in the panel to make it active, and
+"Check now" runs against its models. The choice is saved to `config.json` (`active_source`) and
+survives restarts.
+
+Known-agent catalog: Qoder, zcode, Codex CLI, free-claude-code, Cline, Claude Code, Gemini CLI,
+Copilot CLI, LM Studio, Ollama, Continue, Aider. Deep scan (`--deep`, or the checkbox in the panel)
+also walks the profile and recognises unknown configs by their providers/models shape.
+
+Sources come in three kinds: **agent** (a real client you use; some are probeable), **catalog**
+(a model list shipped with an agent), and **registry** (metadata such as `~/.cache/kilo/models.json`
+- not your config, shown as reference only and never probed).
+
+**Security.** The inventory **never shows key values** - only a has_key flag and its length. Keys
+are read into memory only at probe time and never written. The walk is bounded (depth 5, up to
+40000 files, a size cap, pruned caches/system dirs) - not a full-disk crawl.
 
 ### MCP connector
 

@@ -47,6 +47,18 @@
   <span class="status" id="pathstate"></span>
 </section>
 
+<section class="sources">
+  <div class="src-head">
+    <button id="srctoggle" class="ghost"><span class="caret">▸</span> <span data-i18n="sources_title"></span>
+      <span class="badge" id="srcbadge">0</span></button>
+    <span class="src-active" id="srcactive"></span>
+    <label class="deepbox"><input type="checkbox" id="deepscan"> <span data-i18n="deep_scan"></span></label>
+    <button id="srcrescan" class="ghost" data-i18n="rescan"></button>
+    <span class="status" id="srcstate"></span>
+  </div>
+  <div id="srclist" class="src-list hidden"></div>
+</section>
+
 <section class="bar">
   <input id="filter" type="search">
   <div class="chips" id="chips">

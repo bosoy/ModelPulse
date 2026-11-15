@@ -26,6 +26,9 @@ STATE = {
     "timeout": 30.0,
     "source_path": None,
     "source_mtime": None,
+    "source_agent": "Qoder",
+    "active_source": "qoder",
+    "deep_scan": False,
     "provider_count": 0,
     "model_count": 0,
     "last_error": None,
@@ -45,11 +48,19 @@ def do_scan(trigger):
         with STATE_LOCK:
             STATE["scanning"] = True
             STATE["last_scan_started"] = time.time()
-        path, mtime, targets = core.load_targets(
-            STATE.get("settings_override") or None)
+            active = STATE["active_source"]
+            deep = STATE["deep_scan"]
+            override = (STATE.get("settings_override") or "").strip()
+        if override:
+            # explicit path wins: keep the classic single-file behaviour
+            src = None
+            path, mtime, targets = core.load_targets(override)
+        else:
+            src, path, mtime, targets = core.load_targets_for(active, deep=deep)
         with STATE_LOCK:
             STATE["source_path"] = path
             STATE["source_mtime"] = mtime
+            STATE["source_agent"] = (src["agent"] if src else "Qoder")
             STATE["provider_count"] = len({t["provider_id"] for t in targets})
             STATE["model_count"] = len(targets)
             STATE["last_error"] = None
@@ -165,12 +176,29 @@ class Handler(BaseHTTPRequestHandler):
             self._json({
                 "path": st["source_path"] or core.settings_path(),
                 "mtime": st["source_mtime"],
+                "agent": st["source_agent"],
+                "active": st["active_source"],
+                "deep": st["deep_scan"],
                 "providers": st["provider_count"],
                 "models": st["model_count"],
                 "interval": st["interval"],
                 "scanning": st["scanning"],
                 "last_error": st["last_error"],
             })
+        elif p == "/api/sources":
+            from urllib.parse import parse_qs
+            q = parse_qs(self.path.split("?", 1)[1]) if "?" in self.path else {}
+            deep = (q.get("deep") or ["0"])[0] in ("1", "true", "yes")
+            with STATE_LOCK:
+                active = STATE["active_source"]
+            try:
+                sources = core.list_sources(deep=deep)
+            except Exception as e:
+                self._json({"error": str(e)}, 500)
+                return
+            for s in sources:
+                s["active"] = (s["id"] == active)
+            self._json({"sources": sources, "active": active})
         elif p == "/api/summary":
             last = STORE.last_run()
             with STATE_LOCK:
@@ -232,6 +260,25 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             self._json({"ok": True, "state": st})
+        elif p == "/api/source":
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            with STATE_LOCK:
+                if "active" in data:
+                    STATE["active_source"] = str(data.get("active") or "qoder").strip()
+                if "deep" in data:
+                    STATE["deep_scan"] = bool(data.get("deep"))
+                st = dict(STATE)
+            try:
+                core.save_config({"active_source": st["active_source"]})
+            except Exception:
+                pass
+            self._json({"ok": True, "active": st["active_source"],
+                        "deep": st["deep_scan"]})
         elif p == "/api/open-folder":
             target = core.APP_DIR
             try:
@@ -268,6 +315,7 @@ def main():
         STATE["timeout"] = max(5.0, float(cfg.get("timeout_seconds") or 30))
         STATE["language"] = cfg.get("language") or "ru"
         STATE["settings_override"] = (cfg.get("settings_path") or "").strip()
+        STATE["active_source"] = (cfg.get("active_source") or "qoder").strip()
 
     threading.Thread(target=scheduler_loop, daemon=True).start()
 

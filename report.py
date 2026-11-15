@@ -147,6 +147,7 @@ def render(results, meta, T=None):
   </div>
 </header>
 <div class="meta">
+  <span>%(l_agent)s: <b>%(agent)s</b></span>
   <span>%(l_source)s: <b class="p">%(source)s</b></span>
   <span>%(l_models)s: <b>%(nmodels)d</b></span>
   <span>%(l_providers)s: <b>%(nprov)d</b></span>
@@ -177,6 +178,8 @@ def render(results, meta, T=None):
         "css": _CSS,
         "l_source": _esc(_t(T, "source", "source")),
         "source": _esc(meta.get("source") or ""),
+        "l_agent": _esc(_t(T, "agent_word", "agent")),
+        "agent": _esc(meta.get("agent") or ""),
         "l_models": _esc(_t(T, "models_word", "models")),
         "nmodels": meta.get("nmodels", len(results)),
         "l_providers": _esc(_t(T, "providers", "providers")),

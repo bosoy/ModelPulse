@@ -135,7 +135,7 @@ async function loadSource() {
   const j = await (await fetch("/api/source")).json();
   $("#c-source").textContent = j.path || "-";
   $("#c-source-meta").textContent =
-    `${t("providers", "providers")}: ${j.providers} - ${t("models_word", "models")}: ${j.models}`
+    `${j.agent || "-"} - ${t("providers", "providers")}: ${j.providers} - ${t("models_word", "models")}: ${j.models}`
     + ` - ${t("reread", "reread")}: ${fmtDate(j.mtime)}`;
   $("#interval").value = j.interval;
   const dot = $("#livedot");
@@ -145,6 +145,88 @@ async function loadSource() {
     : (j.last_error ? t("state_error", "error") + ": " + j.last_error
                     : t("state_idle", "idle"));
   if (j.scanning) setTimeout(refresh, 1500);
+  return j;
+}
+
+let SOURCES = [];
+
+function activeLabel(activeId) {
+  const s = SOURCES.find((x) => x.id === activeId);
+  return s ? s.agent : (activeId || "-");
+}
+
+function setActiveLabel(activeId) {
+  $("#srcactive").innerHTML = t("active_source", "active") + ": <b>"
+    + esc(activeLabel(activeId)) + "</b>";
+}
+
+function srcTag(s) {
+  const out = [];
+  if (s.probeable) out.push(`<span class="tag ok">${t("tag_probe", "probe")}</span>`);
+  else out.push(`<span class="tag meta">${t("tag_list", "list only")}</span>`);
+  if (s.has_keys) out.push(`<span class="tag keys">${t("tag_keys", "has key")}</span>`);
+  if (s.category === "registry") out.push(`<span class="tag meta">${t("tag_meta", "registry")}</span>`);
+  else if (s.category === "catalog") out.push(`<span class="tag meta">${t("tag_catalog", "catalog")}</span>`);
+  return out.join(" ");
+}
+
+function renderSources(active) {
+  const list = $("#srclist");
+  if (!SOURCES.length) {
+    list.innerHTML = `<div class="src-note">${t("nothing", "nothing")}</div>`;
+    return;
+  }
+  list.innerHTML = SOURCES.map((s) => `
+    <div class="src-row ${s.active ? "on" : ""}" data-id="${esc(s.id)}">
+      <span class="dotmark">${s.active ? "\u25cf" : "\u25cb"}</span>
+      <span class="sname">${esc(s.agent)}</span>
+      <span class="spath" title="${esc(s.path)}">${esc(s.path)}</span>
+      <span class="scount">${s.model_count}</span>
+      <span class="stag">${srcTag(s)}</span>
+    </div>
+    ${s.note && s.category !== "agent" ? `<div class="src-note">${esc(s.note)}</div>` : ""}`
+  ).join("");
+  list.querySelectorAll(".src-row").forEach((row) => {
+    row.onclick = () => selectSource(row.dataset.id);
+  });
+}
+
+async function loadSources(deep) {
+  const q = deep === undefined ? "" : ("?deep=" + (deep ? "1" : "0"));
+  $("#srcstate").textContent = t("state_scanning", "scanning...");
+  try {
+    const j = await (await fetch("/api/sources" + q)).json();
+    SOURCES = j.sources || [];
+    $("#srcbadge").textContent = SOURCES.length;
+    const probe = SOURCES.filter((s) => s.probeable).length;
+    $("#srcstate").textContent =
+      `${t("found", "found")}: ${SOURCES.length} (${t("probeable", "probeable")}: ${probe})`;
+    renderSources(j.active);
+    setActiveLabel(j.active);
+  } catch (e) {
+    $("#srcstate").textContent = String(e);
+  }
+}
+
+async function selectSource(id) {
+  $("#srcstate").textContent = "...";
+  try {
+    const r = await fetch("/api/source", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ active: id }),
+    });
+    const j = await r.json();
+    id = j.active || id;
+  } catch (e) {
+    $("#srcstate").textContent = String(e);
+    return;
+  }
+  SOURCES.forEach((s) => { s.active = (s.id === id); });
+  renderSources(id);
+  setActiveLabel(id);
+  $("#srcstate").textContent = t("scan_done", "done");
+  setTimeout(refresh, 800);
 }
 
 async function loadConfig() {
@@ -258,6 +340,18 @@ document.querySelectorAll("th[data-sort]").forEach((th) => {
   };
 });
 
+$("#srctoggle").onclick = () => {
+  $(".sources").classList.toggle("open");
+  $("#srclist").classList.toggle("hidden");
+  if (!$("#srclist").classList.contains("hidden") && !SOURCES.length) {
+    loadSources($("#deepscan").checked);
+  }
+};
+
+$("#srcrescan").onclick = () => loadSources($("#deepscan").checked);
+
+$("#deepscan").onchange = () => loadSources($("#deepscan").checked);
+
 (async () => {
   try {
     T = await (await fetch("/i18n.ru.json")).json();
@@ -265,5 +359,6 @@ document.querySelectorAll("th[data-sort]").forEach((th) => {
   applyI18n();
   await loadConfig();
   refresh();
+  loadSources(false);
   setInterval(refresh, 10000);
 })();

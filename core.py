@@ -29,6 +29,7 @@ _DEFAULT_CONFIG = {
     "workers": 8,
     "language": "ru",
     "browser": "",
+    "active_source": "qoder",
 }
 
 
@@ -134,6 +135,47 @@ def host_of(base):
         return base.split("//", 1)[1].split("/", 1)[0]
     except Exception:
         return base
+
+
+# -- multi-source dispatch ---------------------------------------------
+def _import_discover():
+    import discover
+    return discover
+
+
+def list_sources(deep=False):
+    """Return discovered agent sources (no secrets inside)."""
+    return _import_discover().discover(deep=deep)
+
+
+def resolve_source(source_id, deep=False):
+    """Find a discovered source by id. None -> active from config, else qoder."""
+    source_id = (source_id or "").strip()
+    if not source_id:
+        source_id = (load_config().get("active_source") or "qoder").strip()
+    sources = list_sources(deep=deep)
+    for s in sources:
+        if s["id"] == source_id:
+            return s
+    return sources[0] if sources else None
+
+
+def load_targets_for(source_id=None, deep=False):
+    """Return (source, path, mtime, targets) for a source id.
+
+    The classic Qoder source keeps using load_targets() so its exact retry and
+    parsing behaviour is preserved. Other sources go through discover.
+    """
+    src = resolve_source(source_id, deep=deep)
+    if src is None:
+        path, mtime, targets = load_targets()
+        return None, path, mtime, targets
+    if src["id"] == "qoder" or src.get("format") == "qoder":
+        path, mtime, targets = load_targets()
+        return src, path, mtime, targets
+    disc = _import_discover()
+    targets = disc.targets_for_source(src)
+    return src, src.get("path"), src.get("mtime"), targets
 
 
 def http_json(url, key, payload=None, timeout=DEFAULT_TIMEOUT):

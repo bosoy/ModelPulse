@@ -1,30 +1,25 @@
 {
   "app_name": "ModelPulse",
   "tagline": "монитор доступности моделей",
-
   "scan_now": "Проверить сейчас",
   "save": "Сохранить",
   "interval": "интервал",
   "max_tokens": "лимит токенов",
   "seconds": "сек",
-
   "card_reply": "ответили",
   "card_empty": "думают",
   "card_fail": "не прошли",
   "card_total": "всего моделей",
   "card_source": "источник настроек",
-
   "filter_ph": "фильтр: модель / хост / провайдер",
   "chip_all": "все",
   "chip_reply": "ответили",
   "chip_empty": "думают",
   "chip_fail": "не прошли",
-
   "state_idle": "ожидание",
   "state_scanning": "идёт проверка...",
   "state_starting": "запуск...",
   "state_error": "ошибка",
-
   "col_st": "ст",
   "col_model": "модель",
   "col_host": "хост",
@@ -33,7 +28,6 @@
   "col_uptime": "доступность 1ч / 24ч",
   "col_spark": "история",
   "col_note": "ответ / примечание",
-
   "legend": "REPLY = пришёл текст · EMPTY = 200, но ответа нет · FAIL = ошибка",
   "providers": "провайдеров",
   "models_word": "моделей",
@@ -51,19 +45,15 @@
   "reply_word": "ответов",
   "empty_word": "без текста",
   "fail_word": "ошибок",
-
   "settings_path_label": "путь к файлу настроек",
   "settings_path_ph": "пусто = ~/.qoder/settings.json",
   "open_folder": "Открыть папку",
   "save_path": "Сохранить путь",
-
   "scan_done": "готово",
   "scanning_word": "идёт проверка...",
   "error_word": "ошибка",
-
   "state_auto": "авто",
   "mode_hint": "пусто — используется стандартный файл Qoder",
-
   "run_once": "разовый прогон",
   "source": "источник",
   "timeout_word": "таймаут",
@@ -80,5 +70,21 @@
   "report_file": "файл отчёта",
   "workers_word": "воркеров",
   "elapsed_word": "прошло",
-  "no_open_hint": "браузер не открываем, отчёт лежит в файле"
+  "no_open_hint": "браузер не открываем, отчёт лежит в файле",
+  "sources_title": "Источники (агенты на ПК)",
+  "deep_scan": "глубокий поиск по диску",
+  "rescan": "Пересканировать",
+  "active_source": "активный источник",
+  "found": "найдено",
+  "probeable": "прозваниваемых",
+  "tag_probe": "прозвон",
+  "tag_list": "только список",
+  "tag_keys": "есть ключ",
+  "tag_meta": "метаданные",
+  "tag_catalog": "каталог",
+  "source_type_agent": "агент",
+  "source_type_catalog": "каталог моделей",
+  "source_type_registry": "реестр (не твой конфиг)",
+  "agent_word": "агент",
+  "list_sources_hint": "список найденных агентов"
 }
