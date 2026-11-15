@@ -177,6 +177,11 @@ pyinstaller --clean --noconfirm ModelPulse.spec   # -> dist/ModelPulse.exe
 
 Command-line flags still work (`--port`, `--interval`, `--open` / `--no-open`, `--scan-on-start`).
 
+**The exe is an addition, not a replacement — the original install still works unchanged.** Keep a
+clone of the repo and run `start.cmd` (web monitor) or `once.cmd` (one-shot report), or `python
+server.py` / `python once.py` directly. That path needs Python, and keeps its own
+`data/modelpulse.db` in the project folder.
+
 ### Sources: agents on this machine
 
 ModelPulse can find **other agents and clients** installed on the PC and pull models from them.
@@ -413,6 +418,11 @@ pyinstaller --clean --noconfirm ModelPulse.spec   # -> dist/ModelPulse.exe
 
 Флаги командной строки работают и у exe: `--port`, `--interval`, `--open` / `--no-open`,
 `--scan-on-start`.
+
+**Exe — дополнение, а не замена: старый способ установки работает как и раньше.** Клонируй
+репозиторий и запускай `start.cmd` (веб-монитор) или `once.cmd` (разовый отчёт), либо прямо
+`python server.py` / `python once.py`. Для этого пути нужен Python, и своя `data/modelpulse.db`
+остаётся в папке проекта.
 
 ### Источники: агенты на компьютере
 
