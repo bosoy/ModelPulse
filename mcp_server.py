@@ -25,7 +25,7 @@ import core
 
 PROTOCOL_VERSION = "2024-11-05"
 SERVER_NAME = "modelpulse"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.1.0"
 MAX_WORKERS = 8
 
 

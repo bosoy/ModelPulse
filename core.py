@@ -62,7 +62,7 @@ def prompt_for(mode="full", lang="en"):
     return _PROMPT_CACHE[lang].get(key) or fallback
 
 # Keep in sync with the git tag (vX.Y.Z). Shown in the dashboard header.
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 # Cloudflare-fronted hosts ban the default Python-urllib signature (error 1010),
 # so send a plain browser UA; without it whole providers look "down" when they are up.

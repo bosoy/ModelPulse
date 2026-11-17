@@ -221,7 +221,7 @@ def summary_payload():
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ModelPulse/1.0"
+    server_version = "ModelPulse/1.1"
 
     def log_message(self, fmt, *args):
         pass
