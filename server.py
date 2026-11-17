@@ -42,7 +42,9 @@ STATE = {
     "scan_total": 0,
     "scan_done": 0,
     "scan_current": None,
+    "scan_inflight": [],
     "auto": False,
+    "scan_mode": "full",
 }
 STATE_LOCK = threading.Lock()
 STORE = None
@@ -54,11 +56,12 @@ AUTO = threading.Event()
 AUTO_WAKE = threading.Event()
 
 
-def do_scan(trigger):
+def do_scan(trigger, mode_override=None):
     """Run one full scan and persist it. Serialized so scans never overlap.
 
     A cancelled pass is dropped entirely: no run row and no probe rows are
     written, so partial results never reach history or uptime statistics.
+    mode_override forces 'quick' or 'full' for this pass only.
     """
     if not RUN_LOCK.acquire(blocking=False):
         return None, "scan already running"
@@ -72,6 +75,9 @@ def do_scan(trigger):
             active = STATE["active_source"]
             deep = STATE["deep_scan"]
             override = (STATE.get("settings_override") or "").strip()
+            scan_mode = mode_override if mode_override in core.SCAN_MODES \
+                else (STATE.get("scan_mode") or "full")
+            scan_lang = STATE.get("language") or "ru"
         if override:
             # explicit path wins: keep the classic single-file behaviour
             src = None
@@ -93,11 +99,33 @@ def do_scan(trigger):
         if muted:
             targets = [t for t in targets
                        if (t["model"], t["host"]) not in muted]
+        # probe the models with the best track record first: a scan the user
+        # cancels early then still contains the answers they care about most
+        try:
+            scores = STORE.score_map()
+        except Exception:
+            scores = {}
+
+        def _rank(t):
+            # highest reply-share first; unknown models sit in the middle so a
+            # brand-new pair is neither buried nor jumped ahead of a proven one
+            s = scores.get((t["model"], t["host"]))
+            return -(s if s is not None else 0.5)
+
         with STATE_LOCK:
             STATE["model_count"] = len(targets)
             STATE["scan_total"] = len(targets)
             STATE["scan_done"] = 0
             STATE["scan_current"] = None
+            STATE["scan_inflight"] = []
+
+        def on_start(t):
+            # fired inside a worker thread the instant a probe really starts its
+            # request, so the UI can name models that are in flight right now -
+            # not the last one that finished (which made a slow pass look hung)
+            with STATE_LOCK:
+                STATE["scan_inflight"].append(
+                    {"model": t.get("model"), "host": t.get("host")})
 
         def on_result(r):
             # streamed from core.scan as each probe lands, so the UI can show
@@ -108,21 +136,34 @@ def do_scan(trigger):
                     "model": r.get("model"), "host": r.get("host"),
                     "status": r.get("status"), "ms": r.get("ms"),
                 }
+                # drop this one from the in-flight list (host+model is unique
+                # per probe, so we can match it back without an id)
+                live = STATE["scan_inflight"]
+                for i, x in enumerate(live):
+                    if x.get("model") == r.get("model") \
+                            and x.get("host") == r.get("host"):
+                        live.pop(i)
+                        break
 
         results = core.scan(targets, timeout=STATE["timeout"],
                             max_tokens=STATE["max_tokens"],
-                            should_stop=CANCEL.is_set, on_result=on_result)
+                            should_stop=CANCEL.is_set, on_result=on_result,
+                            on_start=on_start, mode=scan_mode, sort_key=_rank,
+                            lang=scan_lang)
         cancelled = CANCEL.is_set()
         summary = core.summarize(results)
         run_id = None
-        if not cancelled:
+        # a cancelled pass is no longer thrown away: whatever finished before the
+        # stop is saved and shown, flagged partial so history is not read as a
+        # clean full sweep. An empty cancel (nothing landed) still writes nothing.
+        if results:
             run_id = STORE.start_run(path, trigger, started_at=started_at)
-            if results:
-                STORE.add_probes(run_id, results)
-            STORE.finish_run(run_id, summary)
+            STORE.add_probes(run_id, results)
+            STORE.finish_run(run_id, summary, partial=cancelled)
         with STATE_LOCK:
             STATE["last_scan_finished"] = time.time()
             STATE["scanning"] = False
+            STATE["scan_inflight"] = []
             STATE["last_cancelled"] = cancelled
             if cancelled:
                 STATE["last_error"] = None
@@ -130,6 +171,7 @@ def do_scan(trigger):
     except Exception as e:
         with STATE_LOCK:
             STATE["scanning"] = False
+            STATE["scan_inflight"] = []
             STATE["last_error"] = str(e)
         return None, str(e)
     finally:
@@ -260,6 +302,7 @@ class Handler(BaseHTTPRequestHandler):
                 "interval": st["interval"],
                 "scanning": st["scanning"],
                 "auto": st.get("auto", False),
+                "scan_mode": st.get("scan_mode") or "full",
                 "last_error": st["last_error"],
                 "last_cancelled": st.get("last_cancelled", False),
             })
@@ -281,6 +324,7 @@ class Handler(BaseHTTPRequestHandler):
                 "done": done,
                 "percent": (round(100.0 * done / total) if total else 0),
                 "current": st.get("scan_current"),
+                "inflight": st.get("scan_inflight") or [],
                 "elapsed": round(elapsed, 1),
             })
         elif p == "/api/sources":
@@ -359,7 +403,16 @@ class Handler(BaseHTTPRequestHandler):
             if STATE["scanning"]:
                 self._json({"ok": False, "reason": "scanning"}, 409)
                 return
-            threading.Thread(target=do_scan, args=("manual",), daemon=True).start()
+            # a one-shot scan may override the mode for this pass only; the
+            # saved preference is left alone
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+            except Exception:
+                data = {}
+            override = data.get("mode")
+            threading.Thread(target=do_scan, args=("manual", override),
+                             daemon=True).start()
             self._json({"ok": True, "started": True})
         elif p == "/api/auto":
             try:
@@ -406,6 +459,8 @@ class Handler(BaseHTTPRequestHandler):
                     STATE["language"] = data["language"]
                 if data.get("theme") in ("light", "dark", "system"):
                     STATE["theme"] = data["theme"]
+                if data.get("scan_mode") in core.SCAN_MODES:
+                    STATE["scan_mode"] = data["scan_mode"]
                 st = dict(STATE)
             try:
                 core.save_config({
@@ -415,6 +470,7 @@ class Handler(BaseHTTPRequestHandler):
                     "settings_path": st["settings_override"],
                     "language": st["language"],
                     "theme": st["theme"],
+                    "scan_mode": st["scan_mode"],
                 })
             except Exception:
                 pass
@@ -589,6 +645,82 @@ def _port_busy(host, port):
         s.close()
 
 
+def _sibling_pids():
+    """PIDs of other running copies of this exe (Windows only).
+
+    Matched by image name, so a stale copy launched from any folder is caught.
+    Frozen-only by contract: from source sys.executable is python.exe, and
+    terminating every python.exe on the box would be absurd.
+    """
+    if not sys.platform.startswith("win"):
+        return []
+    import ctypes
+    from ctypes import wintypes
+    TH32CS_SNAPPROCESS = 0x00000002
+    INVALID = ctypes.c_void_p(-1).value
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_void_p),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    me = os.getpid()
+    name = os.path.normcase(os.path.basename(sys.executable))
+    k32 = ctypes.windll.kernel32
+    snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snap == INVALID:
+        return []
+    out = []
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            pid = entry.th32ProcessID
+            if pid and pid != me \
+                    and os.path.normcase(entry.szExeFile) == name:
+                out.append(pid)
+            ok = k32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        k32.CloseHandle(snap)
+    return out
+
+
+def _kill_siblings():
+    """Terminate every other copy of this exe, so exactly one dashboard is live.
+
+    A stale copy keeps the port bound and serves its old code (which is how an
+    outdated build ends up silently shadowing a fresh one). Frozen-only: from
+    source the image is python.exe and killing every python.exe would be wild.
+    Returns the PIDs actually terminated.
+    """
+    if not core.FROZEN or not sys.platform.startswith("win"):
+        return []
+    import ctypes
+    PROCESS_TERMINATE = 0x0001
+    k32 = ctypes.windll.kernel32
+    killed = []
+    for pid in _sibling_pids():
+        h = k32.OpenProcess(PROCESS_TERMINATE, False, pid)
+        if not h:
+            continue
+        try:
+            if k32.TerminateProcess(h, 0):
+                killed.append(pid)
+        finally:
+            k32.CloseHandle(h)
+    return killed
+
+
 def _fatal(text):
     """A windowed exe has no console: log the reason and show a message box.
 
@@ -629,6 +761,10 @@ def main():
     ap.add_argument("--interval", type=int, default=900)
     ap.add_argument("--scan-on-start", action="store_true",
                     help="probe once at launch and turn continuous scanning on")
+    ap.add_argument("--quick", dest="scan_mode", action="store_const", const="quick",
+                    help="use the fast one-word probe (instant, less reliable)")
+    ap.add_argument("--full", dest="scan_mode", action="store_const", const="full",
+                    help="use the chat-sized probe (slower, honest)")
     # a double-clicked exe has no console to read, so it opens the panel itself;
     # running from source keeps the old quiet behaviour
     ap.add_argument("--open", dest="open_browser", action="store_true",
@@ -647,6 +783,8 @@ def main():
         STATE["timeout"] = max(5.0, float(cfg.get("timeout_seconds") or 30))
         STATE["language"] = cfg.get("language") or "ru"
         STATE["theme"] = cfg.get("theme") or "system"
+        mode = args.scan_mode or cfg.get("scan_mode") or "full"
+        STATE["scan_mode"] = mode if mode in core.SCAN_MODES else "full"
         STATE["dead_min_runs"] = max(1, int(cfg.get("dead_min_runs") or 3))
         STATE["settings_override"] = (cfg.get("settings_path") or "").strip()
         STATE["active_source"] = (cfg.get("active_source") or "qoder").strip()
@@ -660,8 +798,17 @@ def main():
             STATE["auto"] = True
         AUTO.set()
 
+    # a fresh launch takes over: kill every other copy of this exe unconditionally
+    # (frozen only), so an older build can never keep the port and shadow the new
+    # one. Then wait briefly for the socket to free.
+    killed = _kill_siblings()
+    if killed:
+        for _ in range(20):
+            time.sleep(0.15)
+            if not _port_busy(args.host, args.port):
+                break
     if _port_busy(args.host, args.port):
-        _fatal("Port %d is already in use - another ModelPulse is running.\n"
+        _fatal("Port %d is already in use - another program is listening.\n"
                "Open http://%s:%d , or close the other window and start again."
                % (args.port, args.host, args.port))
         return 1

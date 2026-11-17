@@ -23,7 +23,43 @@ DEFAULT_SETTINGS = os.path.join(os.path.expanduser("~"), ".qoder", "settings.jso
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_WORKERS = 8
 DEFAULT_MAX_TOKENS = 4096
-PROMPT = "Reply with exactly one word: pong"
+# Fallback probe text (English). The live wording comes from the UI language
+# pack via prompt_for(), so a Russian interface gets Russian answers back and
+# this source stays ASCII-only.
+PROMPT_QUICK = "Reply with exactly one word: pong"
+PROMPT_FULL = ("Write a detailed answer of about 300 words explaining how a web browser "
+               "loads a page, including DNS, TLS, HTTP, rendering, and caching.")
+
+# Two probe strengths. "quick" is one word: instant and cheap, but a model that
+# only survives a one-word ping (e.g. metered output tokens per minute) can look
+# alive here and die in chat. "full" asks a real chat-sized answer, so it is the
+# honest verdict - and the slower one.
+SCAN_MODES = ("quick", "full")
+PROMPT_BY_MODE = {"quick": PROMPT_QUICK, "full": PROMPT_FULL}
+
+_PROMPT_CACHE = {}
+
+
+def prompt_for(mode="full", lang="en"):
+    """The probe text for a mode, in the dashboard's language when available.
+
+    The wording lives in the UI language pack (probe_quick / probe_full) so a
+    Russian interface gets Russian answers back; this module stays ASCII-only
+    and falls back to the English constants if a pack is missing or has no key.
+    """
+    fallback = PROMPT_BY_MODE.get(mode, PROMPT_FULL)
+    lang = "ru" if str(lang).lower().startswith("ru") else "en"
+    key = "probe_" + ("quick" if mode == "quick" else "full")
+    if lang not in _PROMPT_CACHE:
+        pack = {}
+        try:
+            with open(os.path.join(RES_DIR, "ui", "i18n.%s.json" % lang),
+                      "r", encoding="utf-8") as fh:
+                pack = json.load(fh)
+        except Exception:
+            pack = {}
+        _PROMPT_CACHE[lang] = pack
+    return _PROMPT_CACHE[lang].get(key) or fallback
 
 # Keep in sync with the git tag (vX.Y.Z). Shown in the dashboard header.
 APP_VERSION = "1.0.0"
@@ -67,6 +103,7 @@ _DEFAULT_CONFIG = {
     "theme": "system",
     "browser": "",
     "active_source": "qoder",
+    "scan_mode": "full",
 }
 
 
@@ -137,14 +174,17 @@ def load_targets(path=None):
             continue
         root = api_root(base)
         key = (obj.get("apiKey") or "").strip()
+        # keep each model's own output budget: the agent asks for maxOutputTokens,
+        # so probing at a smaller cap can pass a model the chat will 429 on. None
+        # means "no budget stated" -> probe at the shared default.
         models = []
         for m in obj.get("models") or []:
             mid = m.get("model") or m.get("displayName")
             if mid:
-                models.append(mid)
+                models.append((mid, _model_token_budget(m)))
         if not models and obj.get("model"):
-            models.append(obj["model"])
-        for mid in models:
+            models.append((obj["model"], None))
+        for mid, budget in models:
             sig = (root, key, mid)
             if sig in seen:
                 continue
@@ -155,8 +195,28 @@ def load_targets(path=None):
                 "host": host_of(root),
                 "key": key,
                 "model": mid,
+                "max_tokens": budget,
             })
     return path, mtime, targets
+
+
+def _model_token_budget(entry):
+    """maxOutputTokens from one settings.json model entry, as a positive int.
+
+    None when the entry does not state one (or states a junk value), so the
+    caller probes at the shared default instead of inventing a cap.
+    """
+    if not isinstance(entry, dict):
+        return None
+    for k in ("maxOutputTokens", "max_output_tokens", "maxTokens"):
+        v = entry.get(k)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+    return None
 
 
 def api_root(base):
@@ -509,10 +569,11 @@ def wait_info(headers, error, status="fail", http_code=None):
     return int(round(secs)), kind
 
 
-def _probe_once(target, url, timeout, max_tokens):
+def _probe_once(target, url, timeout, max_tokens, mode="full", lang="en"):
+    prompt = prompt_for(mode, lang)
     payload = {
         "model": target["model"],
-        "messages": [{"role": "user", "content": PROMPT}],
+        "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
         "temperature": 0,
     }
@@ -547,46 +608,74 @@ def _probe_once(target, url, timeout, max_tokens):
         "ms": ms,
         "reply": reply,
         "error": error,
-        "limit_tpm": 0,
         "wait_s": wait_s,
         "wait_kind": wait_kind,
+        "mode": mode,
     }
 
 
-def probe(target, timeout=DEFAULT_TIMEOUT, max_tokens=DEFAULT_MAX_TOKENS):
-    """One probe. If the provider caps output tokens per minute lower than the
-    budget we asked for, retry at that cap so a short ping is not mistaken for
-    a dead model - and remember the cap so the panel can warn about it."""
+def probe(target, timeout=DEFAULT_TIMEOUT, max_tokens=DEFAULT_MAX_TOKENS, mode="full",
+          lang="en"):
+    """One probe. mode='full' asks a real chat-sized answer (honest, slower);
+    mode='quick' asks one word (instant, can miss a model that dies in chat).
+    lang picks the prompt wording (the dashboard language), so answers come
+    back in the language the user reads.
+
+    The model's own budget from settings.json wins over max_tokens: probed at a
+    smaller cap a metered model can answer yet still 429 in chat when the agent
+    asks for its full maxOutputTokens, which is exactly the false "green" this
+    avoids. Failures are not retried smaller."""
+    budget = target.get("max_tokens") if isinstance(target, dict) else None
+    cap = budget if isinstance(budget, int) and budget > 0 else max_tokens
     url = target["root"] + "/chat/completions"
-    res = _probe_once(target, url, timeout, max_tokens)
-    if res["status"] != "reply":
-        cap = otpm_limit(res.get("error") or "")
-        if cap and cap < max_tokens:
-            res["limit_tpm"] = cap
-            retry = _probe_once(target, url, timeout, max(1, min(cap, 1024)))
-            retry["limit_tpm"] = cap
-            return retry
-    return res
+    return _probe_once(target, url, timeout, cap, mode, lang)
 
 
 def scan(targets, timeout=DEFAULT_TIMEOUT, workers=DEFAULT_WORKERS,
-         max_tokens=DEFAULT_MAX_TOKENS, should_stop=None, on_result=None):
+         max_tokens=DEFAULT_MAX_TOKENS, should_stop=None, on_result=None,
+         mode="full", on_start=None, sort_key=None, lang="en"):
     """Probe targets in parallel. should_stop() -> True aborts the rest.
 
     Cancellation is checked between completions (every ~0.25s), so it is prompt
     from the caller's view. Requests already in flight cannot be killed cleanly
-    and finish in the background; their results are simply dropped.
+    and finish in the background; their results are simply dropped - but every
+    probe that already completed is returned, so a cancelled pass still yields
+    whatever it managed to check.
+
+    on_start(target), if given, is called inside a worker thread the moment a
+    probe actually begins its request - not when it is queued - so a caller can
+    show which models are genuinely in flight right now. It runs in several
+    threads, so the callback must be thread-safe.
 
     on_result(result), if given, is called in this thread as each probe finishes
     (never concurrently), so a caller can stream live progress - done count,
-    the model just checked, its timing. Exceptions in the callback never affect
-    the scan.
+    the model just checked, its timing. Exceptions in either callback never
+    affect the scan.
+
+    sort_key, if given, sorts the targets before probing. Work is submitted to
+    the pool in that order and the pool drains its queue in order, so the best
+    candidates are checked first - which matters most on a pass the user may
+    cancel early.
+
+    mode is passed through to probe(): 'full' (chat-sized) or 'quick' (one word).
+    lang picks the prompt wording so answers arrive in the reader's language.
     """
     if not targets:
         return []
+    if sort_key is not None:
+        targets = sorted(targets, key=sort_key)
+
+    def _run_one(t):
+        if on_start is not None:
+            try:
+                on_start(t)
+            except Exception:
+                pass
+        return probe(t, timeout, max_tokens, mode, lang)
+
     pool = ThreadPoolExecutor(max_workers=workers)
     try:
-        pending = {pool.submit(probe, t, timeout, max_tokens) for t in targets}
+        pending = {pool.submit(_run_one, t) for t in targets}
         results = []
         while pending:
             if should_stop is not None and should_stop():

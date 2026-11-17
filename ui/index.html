@@ -42,6 +42,10 @@
       <input id="maxtok" type="number" min="1" step="1" value="4096">
     </label>
     <button id="saveset" class="ghost" data-i18n="save"></button>
+    <div class="mode" id="mode" role="group" aria-label="scan mode">
+      <button data-mode="quick" data-i18n="mode_quick">Quick</button>
+      <button data-mode="full" data-i18n="mode_full">Full</button>
+    </div>
     <button id="runnow" class="primary" data-i18n="scan_once"></button>
     <button id="autoscan" class="ghost" data-i18n="scan_auto"></button>
   </div>
@@ -140,8 +144,11 @@
       <span data-i18n="scan_running"></span>
       <span class="scan-dots"><i>.</i><i>.</i><i>.</i></span>
     </div>
-    <div class="scan-bar"><i></i></div>
+    <div class="scan-count" id="scan-count"></div>
+    <div class="scan-bar"><i id="scan-fill"></i></div>
+    <div class="scan-now" id="scan-now"></div>
     <div class="scan-sub" id="scan-sub"></div>
+    <div class="scan-elapsed" id="scan-elapsed"></div>
     <button id="scan-cancel" class="ghost" data-i18n="cancel"></button>
     <div class="scan-hint" id="scan-hint"></div>
   </div>

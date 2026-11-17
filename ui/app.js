@@ -463,6 +463,101 @@ let CANCELLING = false;
 let CANCELLED_SHOWN = false;
 let AUTO = false;
 
+// -- live scan progress -------------------------------------------------
+// the overlay used to sit there blind: now it polls /api/progress while a pass
+// runs, so "is it stuck or working?" always has an answer.
+let PROG_TIMER = null;
+let PROG_TICKER = null;
+let PROG_T0 = 0;
+let POLLING = false;
+
+function fmtDur(s) {
+  s = Math.max(0, Math.round(s));
+  const m = Math.floor(s / 60), sec = s % 60;
+  return m ? `${m} ${t("unit_m", "m")} ${sec} ${t("unit_s", "s")}`
+           : `${sec} ${t("unit_s", "s")}`;
+}
+
+function renderProgress(p) {
+  if (!p) return;
+  const total = p.total || 0, done = p.done || 0;
+  const left = Math.max(0, total - done);
+  $("#scan-count").textContent = total
+    ? `${done} / ${total}`
+    : "";
+  $("#scan-sub").textContent = total
+    ? `${t("scan_left", "left")}: ${left} ${t("models_word", "models")}`
+    : t("scan_counting", "counting models...");
+  const fill = $("#scan-fill");
+  if (total) {
+    fill.classList.add("fill");
+    fill.style.width = Math.max(2, Math.round(100 * done / total)) + "%";
+  } else {
+    fill.classList.remove("fill");
+    fill.style.width = "";
+  }
+  // name the models genuinely in flight this moment: the last one that finished
+  // is stale by up to a full request, which made a slow pass look frozen
+  const live = (p.inflight || []).filter((x) => x && x.model);
+  if (live.length) {
+    $("#scan-now").innerHTML = `<span class="sp"></span>`
+      + t("scan_checking", "checking")
+      + ": " + live.map((x) => `<b>${esc(x.model)}</b>`
+        + (x.host ? ` <span class="d">${esc(x.host)}</span>` : "")).join(", ");
+  } else {
+    const cur = p.current;
+    $("#scan-now").innerHTML = (cur && cur.model && done < total)
+      ? `<span class="sp"></span>${t("scan_checking", "checking")}: `
+        + `<b>${esc(cur.model)}</b> <span class="d">${esc(cur.host || "")}</span>`
+      : (done >= total && total
+          ? `<span class="sp"></span>${t("scan_wrapping", "finishing up...")}`
+          : `<span class="sp"></span>${t("scan_pending", "starting...")}`);
+  }
+  const el = p.elapsed || (PROG_T0 ? (Date.now() / 1000 - PROG_T0) : 0);
+  $("#scan-elapsed").textContent = t("scan_elapsed", "elapsed") + ": " + fmtDur(el);
+}
+
+async function pollProgress() {
+  clearTimeout(PROG_TIMER);
+  if (!SCANNING) { POLLING = false; return; }
+  try {
+    const p = await (await fetch("/api/progress", { cache: "no-store" })).json();
+    if (p && p.scanning) {
+      renderProgress(p);
+      PROG_TIMER = setTimeout(pollProgress, 700);
+    } else {
+      // the pass ended: release the latch BEFORE refresh(), or a stale POLLING
+      // would make the next setScanning(true) a no-op and the overlay go blind
+      POLLING = false;
+      setTimeout(refresh, 200);
+    }
+  } catch (e) {
+    PROG_TIMER = setTimeout(pollProgress, 1500);
+  }
+}
+
+function startProgressPoll() {
+  if (POLLING) return;   // refresh() calls setScanning(true) every pass
+  POLLING = true;
+  PROG_T0 = Date.now() / 1000;
+  clearInterval(PROG_TICKER);
+  // tick the "elapsed" counter every second even between polls, so the number
+  // visibly moves and the screen never looks frozen
+  PROG_TICKER = setInterval(() => {
+    if (!SCANNING) return;
+    const el = $("#scan-elapsed");
+    if (el) el.textContent = t("scan_elapsed", "elapsed") + ": "
+      + fmtDur(Date.now() / 1000 - PROG_T0);
+  }, 1000);
+  pollProgress();
+}
+
+function stopProgressPoll() {
+  POLLING = false;
+  clearTimeout(PROG_TIMER);
+  clearInterval(PROG_TICKER);
+}
+
 function setAuto(on) {
   AUTO = !!on;
   const b = $("#autoscan");
@@ -472,6 +567,25 @@ function setAuto(on) {
   b.classList.toggle("ghost", !AUTO);
   b.textContent = t(AUTO ? "auto_on" : "scan_auto", AUTO ? "continuous: on" : "continuous");
   b.title = t("auto_hint", "");
+}
+
+// probe strength: quick = one-word ping (fast, can be wrong), full = chat-size
+let SCAN_MODE = "full";
+
+function setMode(mode, save) {
+  SCAN_MODE = (mode === "quick") ? "quick" : "full";
+  document.querySelectorAll("#mode button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.mode === SCAN_MODE);
+  });
+  const box = $("#mode");
+  if (box) box.title = t(SCAN_MODE === "quick" ? "mode_quick_hint" : "mode_full_hint", "");
+  if (save) {
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scan_mode: SCAN_MODE }),
+    }).catch(() => {});
+  }
 }
 
 function setScanning(on, sub) {
@@ -485,9 +599,11 @@ function setScanning(on, sub) {
     cb.textContent = t("cancel", "Cancel");
     cb.disabled = false;
     ov.classList.remove("hidden");
+    startProgressPoll();
   } else {
     ov.classList.add("hidden");
     CANCELLING = false;
+    stopProgressPoll();
   }
 }
 
@@ -522,6 +638,7 @@ async function loadSource() {
     + ` - ${t("reread", "reread")}: ${fmtDate(j.mtime)}`;
   $("#interval").value = j.interval;
   setAuto(j.auto);
+  if (j.scan_mode) setMode(j.scan_mode, false);
   const dot = $("#livedot");
   dot.className = "dot " + (j.scanning ? "busy" : (AUTO ? "auto" : "live"));
   if (j.scanning) {
@@ -664,8 +781,14 @@ async function loadSummary() {
   const lr = j.last_run;
   if (lr) {
     const trg = t("trigger_" + lr.trigger, lr.trigger);
-    $("#foot").textContent =
-      `${t("last_scan", "last scan")} ${fmtTime(lr.finished_at || lr.started_at)} - ${t("trigger", "trigger")}: ${trg}`;
+    let line = `${t("last_scan", "last scan")} ${fmtTime(lr.finished_at || lr.started_at)} - ${t("trigger", "trigger")}: ${trg}`;
+    // a stopped sweep keeps what it managed to check; say so, or the numbers
+    // read as a full clean pass they never were
+    if (lr.partial) {
+      line = t("scan_partial", "partial (cancelled)") + " - " + line
+        + ` - ${t("scan_checked", "checked")}: ${lr.total}`;
+    }
+    $("#foot").textContent = line;
   }
 }
 
@@ -820,9 +943,19 @@ $("#runnow").onclick = async () => {
   SCAN_HOLD = Date.now() + 4000;
   CANCELLING = false;
   setScanning(true, t("state_starting", "starting..."));
-  await fetch("/api/run", { method: "POST" });
+  // a one-shot scan uses the mode currently selected, without changing the
+  // saved preference
+  await fetch("/api/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: SCAN_MODE }),
+  });
   setTimeout(refresh, 900);
 };
+
+document.querySelectorAll("#mode button").forEach((b) => {
+  b.onclick = () => setMode(b.dataset.mode, true);
+});
 
 $("#autoscan").onclick = async () => {
   const next = !AUTO;

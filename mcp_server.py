@@ -7,8 +7,8 @@ answer "which models are online right now" with real latency and a real reply,
 not a static config flag.
 
 Two tools:
-  models_status   - mode=ping: 1-token chat call per model (REPLY/EMPTY/FAIL)
-                    mode=list: GET {base}/models per provider (no generation)
+  models_status   - mode=ping: representative long-answer chat call per model
+                    (REPLY/EMPTY/FAIL); mode=list: GET {base}/models per provider
   models_providers - offline inventory of configured providers
 
 No third-party deps: stdlib only. Keys are read into memory and never written
@@ -34,15 +34,26 @@ def log(msg):
     sys.stderr.flush()
 
 
+def _probe_lang():
+    """Probe in the dashboard's language, so the tool reports answers the user
+    can read back. Falls back to English when config.json has no language."""
+    try:
+        lang = (core.load_config().get("language") or "en").strip().lower()
+    except Exception:
+        lang = "en"
+    return "ru" if lang.startswith("ru") else "en"
+
+
 def ping_mode(targets, timeout):
+    lang = _probe_lang()
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         results = list(pool.map(
             lambda t: core.probe(t, timeout=timeout,
-                                 max_tokens=core.DEFAULT_MAX_TOKENS), targets))
+                                 max_tokens=core.DEFAULT_MAX_TOKENS, lang=lang),
+            targets))
     rank = {"reply": 0, "empty": 1, "fail": 2}
     results.sort(key=lambda r: (rank.get(r["status"], 3), r["host"], r["model"]))
     return results
-
 
 def list_mode(targets, timeout):
     def one(t):
@@ -154,9 +165,11 @@ TOOLS = [
     {
         "name": "models_status",
         "description": ("Actively probe the BYOK models configured in your agent and "
-                        "report which actually answer. mode=ping asks each model "
-                        "for one word and only counts a real non-empty reply as "
-                        "success (REPLY / EMPTY / FAIL); mode=list calls GET "
+                        "report which actually answer. mode=ping asks each model for "
+                        "a representative multi-sentence answer (so a model that only "
+                        "survives a one-word ping but dies on a real chat message is "
+                        "reported unavailable) and only counts a real non-empty reply "
+                        "as success (REPLY / EMPTY / FAIL); mode=list calls GET "
                         "/models per provider (no generation). Optional filter is "
                         "a substring on model id, provider id or host."),
         "inputSchema": {
@@ -164,7 +177,7 @@ TOOLS = [
             "properties": {
                 "mode": {"type": "string", "enum": ["ping", "list"],
                          "default": "ping",
-                         "description": "ping = live 1-token call; list = fetch /models"},
+                         "description": "ping = live chat-sized call; list = fetch /models"},
                 "filter": {"type": "string",
                            "description": "substring match on model id or provider id"},
                 "timeout": {"type": "number", "default": core.DEFAULT_TIMEOUT,

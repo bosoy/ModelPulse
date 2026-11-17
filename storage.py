@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS runs (
     empty       INTEGER DEFAULT 0,
     failed      INTEGER DEFAULT 0,
     source      TEXT,
-    trigger     TEXT
+    trigger     TEXT,
+    partial     INTEGER DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS probes (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS probes (
     error       TEXT,
     wait_s      INTEGER DEFAULT 0,
     wait_kind   TEXT,
+    mode        TEXT,
     FOREIGN KEY (run_id) REFERENCES runs(id)
 );
 CREATE INDEX IF NOT EXISTS idx_probes_model_ts ON probes(model, ts);
@@ -67,9 +69,13 @@ class Store(object):
     def _migrate(self):
         """Add columns introduced after a database was first created."""
         have = {r["name"] for r in self._conn.execute("PRAGMA table_info(probes)")}
-        for col, decl in (("wait_s", "INTEGER DEFAULT 0"), ("wait_kind", "TEXT")):
+        for col, decl in (("wait_s", "INTEGER DEFAULT 0"), ("wait_kind", "TEXT"),
+                          ("mode", "TEXT")):
             if col not in have:
                 self._conn.execute("ALTER TABLE probes ADD COLUMN %s %s" % (col, decl))
+        rhav = {r["name"] for r in self._conn.execute("PRAGMA table_info(runs)")}
+        if "partial" not in rhav:
+            self._conn.execute("ALTER TABLE runs ADD COLUMN partial INTEGER DEFAULT 0")
 
     # -- writes ---------------------------------------------------------
     def start_run(self, source, trigger, started_at=None):
@@ -80,25 +86,26 @@ class Store(object):
             self._conn.commit()
             return cur.lastrowid
 
-    def finish_run(self, run_id, summary):
+    def finish_run(self, run_id, summary, partial=False):
         with self._lock:
             self._conn.execute(
-                "UPDATE runs SET finished_at=?, total=?, replied=?, empty=?, failed=? "
-                "WHERE id=?",
+                "UPDATE runs SET finished_at=?, total=?, replied=?, empty=?, failed=?,"
+                " partial=? WHERE id=?",
                 (time.time(), summary["total"], summary["replied"],
-                 summary["empty"], summary["failed"], run_id))
+                 summary["empty"], summary["failed"], 1 if partial else 0, run_id))
             self._conn.commit()
 
     def add_probes(self, run_id, results):
         rows = [(run_id, time.time(), r["model"], r["host"], r["provider_id"],
                  r["status"], r["http_code"], r["ms"], r["reply"], r["error"],
-                 r.get("wait_s") or 0, r.get("wait_kind") or "")
+                 r.get("wait_s") or 0, r.get("wait_kind") or "",
+                 r.get("mode") or "full")
                 for r in results]
         with self._lock:
             self._conn.executemany(
                 "INSERT INTO probes (run_id, ts, model, host, provider_id, status,"
-                " http_code, ms, reply, error, wait_s, wait_kind)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                " http_code, ms, reply, error, wait_s, wait_kind, mode)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             self._conn.commit()
 
     # -- hidden (muted) models -------------------------------------------
@@ -166,19 +173,20 @@ class Store(object):
     def _history(self, model, host, limit=40):
         with self._lock:
             rows = self._conn.execute(
-                "SELECT ts, status, ms, http_code, error, wait_s, wait_kind FROM probes "
-                "WHERE model=? AND host=? ORDER BY ts DESC LIMIT ?",
+                "SELECT ts, status, ms, http_code, error, wait_s, wait_kind, mode"
+                " FROM probes WHERE model=? AND host=? ORDER BY ts DESC LIMIT ?",
                 (model, host, limit)).fetchall()
         return [{"ts": r["ts"], "status": r["status"], "ms": r["ms"],
                  "http_code": r["http_code"], "error": r["error"],
-                 "wait_s": r["wait_s"] or 0, "wait_kind": r["wait_kind"] or ""}
+                 "wait_s": r["wait_s"] or 0, "wait_kind": r["wait_kind"] or "",
+                 "mode": r["mode"] or ""}
                 for r in reversed(rows)]
 
     def model_detail(self, model, host):
         with self._lock:
             rows = self._conn.execute(
-                "SELECT ts, status, ms, http_code, reply, error, wait_s, wait_kind "
-                "FROM probes WHERE model=? AND host=? ORDER BY ts DESC LIMIT 200",
+                "SELECT ts, status, ms, http_code, reply, error, wait_s, wait_kind,"
+                " mode FROM probes WHERE model=? AND host=? ORDER BY ts DESC LIMIT 200",
                 (model, host)).fetchall()
         return [dict(r) for r in rows]
 
@@ -211,3 +219,25 @@ class Store(object):
                 "SELECT DISTINCT model, host, provider_id FROM probes "
                 "ORDER BY host, model").fetchall()
         return [dict(r) for r in rows]
+
+    def score_map(self, window=4096):
+        """{(model, host): reply_share} over each pair's own recent probes.
+
+        reply_share is the fraction of that pair's last `window` probes that
+        answered, so a model with a good track record is probed first and a
+        flaky one last. A pair with no history is absent (the caller treats it
+        as unknown, not bad)."""
+        sql = """
+        SELECT model, host,
+               SUM(CASE WHEN status='reply' THEN 1 ELSE 0 END) AS ok,
+               COUNT(*) AS n FROM (
+            SELECT model, host, status,
+                   ROW_NUMBER() OVER (PARTITION BY model, host ORDER BY ts DESC) AS rn
+            FROM probes
+        ) WHERE rn <= ?
+        GROUP BY model, host
+        """
+        with self._lock:
+            rows = self._conn.execute(sql, (window,)).fetchall()
+        return {(r["model"], r["host"]): (float(r["ok"]) / r["n"] if r["n"] else 0.0)
+                for r in rows}

@@ -142,6 +142,10 @@ def main():
     ap.add_argument("--workers", type=int, default=None)
     ap.add_argument("--lang", default="", help="ru or en (default: from config.json)")
     ap.add_argument("--source", default="", help="agent source id (see --list-sources)")
+    ap.add_argument("--mode", default="", choices=["", "quick", "full"],
+                    help="quick = one-word ping (instant, less reliable); "
+                         "full = chat-sized answer (slower, honest); "
+                         "default: from config.json")
     ap.add_argument("--deep", action="store_true", help="deep scan when listing sources")
     ap.add_argument("--list-sources", action="store_true",
                     help="print discovered agents and exit")
@@ -164,6 +168,9 @@ def main():
     timeout = args.timeout if args.timeout is not None else float(cfg.get("timeout_seconds") or 30)
     max_tokens = args.max_tokens if args.max_tokens is not None else int(cfg.get("max_tokens") or core.DEFAULT_MAX_TOKENS)
     workers = args.workers if args.workers is not None else int(cfg.get("workers") or 8)
+    scan_mode = args.mode or (cfg.get("scan_mode") or "full")
+    if scan_mode not in core.SCAN_MODES:
+        scan_mode = "full"
 
     try:
         src, path, mtime, targets = core.load_targets_for(args.source or None,
@@ -191,10 +198,11 @@ def main():
                           time.strftime("%Y-%m-%d %H:%M:%S")))
     say("%s: %s" % (T.get("agent_word", "agent"), agent))
     say("%s: %s" % (T.get("source", "source"), path))
-    say("%s: %d   %s: %gs   %s: %d"
+    say("%s: %d   %s: %gs   %s: %d   %s: %s"
         % (T.get("models_word", "models"), len(targets),
            T.get("timeout_word", "timeout"), timeout,
-           T.get("max_tokens", "max_tokens"), max_tokens))
+           T.get("max_tokens", "max_tokens"), max_tokens,
+           T.get("mode_word", "mode"), scan_mode))
     say(T.get("probing", "probing..."))
     say("")
 
@@ -214,7 +222,8 @@ def main():
             say("%s: %d" % (T.get("skipped_hidden", "skipped (hidden)"), len(skipped)))
 
     t0 = time.time()
-    results = core.scan(targets, timeout=timeout, workers=workers, max_tokens=max_tokens)
+    results = core.scan(targets, timeout=timeout, workers=workers,
+                        max_tokens=max_tokens, mode=scan_mode, lang=lang)
     elapsed = time.time() - t0
 
     # enrich with the dead verdict from history (dashboard-parity)

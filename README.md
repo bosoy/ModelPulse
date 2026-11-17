@@ -26,12 +26,17 @@ what ModelPulse checks.
 Your agent keeps its connected providers and models in a settings file — by default
 `~/.qoder/settings.json` → `providers`.
 ModelPulse reads **the same file** and actively probes every model with a `chat/completions`
-request ("reply with one word: pong"), verifying that **real answer text** came back, not just
-HTTP 200. No IPC, no plugin — the shared registry file is the whole integration contract.
+request that asks for a **proper multi-sentence answer** — not a one-word ping — and verifies that
+**real answer text** came back, not just HTTP 200. No IPC, no plugin — the shared registry file is
+the whole integration contract.
+
+The probe is deliberately chat-sized: a model that answers a one-word ping but dies on a real chat
+message (for example, a provider that meters *output tokens per minute*) is reported **unavailable**,
+because that is what you would hit in chat.
 
 Statuses:
 
-- **REPLY** — text came back (`pong`);
+- **REPLY** — a real answer came back;
 - **EMPTY** — 200 but no content (reasoning only / empty `content`);
 - **FAIL** — network/HTTP error (403, 404, 429, timeout, ...).
 
@@ -127,11 +132,26 @@ edited without that confirmation. Console equivalent: the same audit is returned
 
 ### Output token caps
 
-Some providers cap *output tokens per minute* far below the probe budget (Groq free tier: 1000).
-Asking for 4096 then fails with `Request too large ... (OTPM): Limit 1000`, while a short chat
-message would pass. When the reply names such a cap, the probe **retries at the stated limit** and
-the note shows it: `output token cap 1000/min - long chat answers will fail`. So a model that answers
-`pong` here but dies on a long answer in chat is reported with its real ceiling, not as healthy.
+Some providers cap *output tokens per minute* far below a full chat answer (Groq free tier: 1000).
+The probe asks for a real multi-sentence answer, so such a model now fails here the same way it
+would in chat, with `Request too large ... (OTPM): Limit 1000` — there is no one-word fallback that
+would paint it green. That is the point: if it cannot answer in chat, it is reported unavailable,
+with the provider's own reset time when it names one.
+
+### Two probe modes: Quick and Full
+
+The dashboard header has a **Quick | Full** switch (saved to `config.json → scan_mode`):
+
+- **Full** (default) asks a real multi-sentence answer — the honest verdict, and the slower one
+  (a slow free model can take ~20 s). Use it to know whether a model really answers in chat.
+- **Quick** asks one word (`pong`) — instant and cheap, but **not reliable**: a model that only
+  survives a one-word ping (metered output tokens per minute, for example) can look alive here and
+  still die in chat. Use it for a fast "is anything obviously down" glance.
+
+Every probe row records which mode produced it (`probes.mode`). A one-shot **Scan once** uses
+whichever mode is currently selected without changing the saved preference; **Continuous scan**
+and scheduled passes use the saved mode. Same on the command line: `python once.py --mode quick`,
+`python server.py --quick` / `--full`.
 
 ### When a model comes back
 
@@ -175,7 +195,8 @@ pip install pyinstaller
 pyinstaller --clean --noconfirm ModelPulse.spec   # -> dist/ModelPulse.exe
 ```
 
-Command-line flags still work (`--port`, `--interval`, `--open` / `--no-open`, `--scan-on-start`).
+Command-line flags still work (`--port`, `--interval`, `--open` / `--no-open`, `--scan-on-start`,
+`--quick` / `--full`).
 
 **The exe is an addition, not a replacement — the original install still works unchanged.** Keep a
 clone of the repo and run `start.cmd` (web monitor) or `once.cmd` (one-shot report), or `python
@@ -252,12 +273,17 @@ ModelPulse показывает, какие из них реально отве�
 Агент хранит подключённые тобой провайдеры и модели в своём файле настроек — по умолчанию это
 `~/.qoder/settings.json` → `providers`.
 ModelPulse читает **тот же файл** и активно прозванивает каждую модель запросом
-`chat/completions` («ответь одним словом: pong»), проверяя, что пришёл **настоящий текст ответа**,
-а не просто HTTP 200. Никакого IPC и никаких плагинов — общий файл-реестр и есть «контракт стыковки».
+`chat/completions`, который просит **нормальный ответ в несколько предложений**, а не одно слово.
+Принимается только **настоящий текст ответа**, а не просто HTTP 200. Никакого IPC и никаких
+плагинов — общий файл-реестр и есть «контракт стыковки».
+
+Прозвон намеренно «чат-размера»: модель, которая отвечает на односложный ping, но умирает на
+настоящем сообщении (например, у провайдера считаются *выходные токены в минуту*), показывается
+**недоступной** — ровно так, как было бы в чате.
 
 Статусы:
 
-- **ОТВЕТ** — пришёл текст (`pong`);
+- **ОТВЕТ** — пришёл настоящий ответ;
 - **ПУСТО** — 200, но контента нет (только reasoning / пустой `content`);
 - **СБОЙ** — ошибка сети/HTTP (403, 404, 429, таймаут и т.д.).
 
@@ -272,7 +298,10 @@ ModelPulse читает **тот же файл** и активно прозва�
    прозванивается, пока не нажмёшь одну из кнопок (поле «интервал» — пауза между проходами в
    постоянном режиме). Идущую проверку можно прервать: **Esc** или кнопка «Отменить». Отменённый
    прогон отбрасывается целиком — в историю и статистику он не попадает; выключение постоянного
-   режима даёт текущему проходу доиграть, а не обрывает его.
+   режима даёт текущему проходу доиграть, а не обрывает его. Во время прохода оверлей показывает
+   **живой прогресс**: сколько моделей проверено из общего числа, сколько осталось, какие модели
+   прямо сейчас *в полёте* (а не последняя завершённая) и сколько прошло времени. Поэтому даже
+   когда модель держит запрос до таймаута, видно, что работа идёт, а не зависла.
 3. **MCP-тул** — `mcp_server.py` отдаёт инструмент агенту, который по запросу делает тот же прогон.
 
 ### Язык интерфейса и тема
@@ -366,12 +395,37 @@ Opera, Yandex, Firefox) → ассоциация `.html`. **Chrome не обяз
 
 ### Лимит токенов на ответ
 
-У части провайдеров потолок *выходных токенов в минуту* намного ниже бюджета прозвона (бесплатный
-Groq: 1000). Запрос на 4096 тогда падает с `Request too large ... (OTPM): Limit 1000`, хотя короткое
-сообщение в чате прошло бы. Если в ответе назван такой потолок, прозвон **повторяется на этом
-лимите**, а примечание показывает его: `лимит 1000 токенов/мин на ответ — длинный ответ в чате не
-пройдёт`. Модель, которая отвечает здесь `pong`, но умирает на длинном ответе в чате, показывается
-со своим реальным потолком, а не как здоровая.
+У части провайдеров потолок *выходных токенов в минуту* намного ниже полноценного ответа в чате
+(бесплатный Groq: 1000). Прозвон просит настоящий ответ в несколько предложений, поэтому такая
+модель теперь падает здесь так же, как упала бы в чате — с `Request too large ... (OTPM):
+Limit 1000`. Никакого отката к одному слову, который покрасил бы её в зелёный, больше нет: не
+отвечает в чате — показывается недоступной, а если провайдер называет срок сброса, он тут же.
+
+### Прозвон в размере модели
+
+Прозвон идёт с тем же потолком выходных токенов, что стоит у модели в `settings.json`
+(`maxOutputTokens`), а не с общим значением из панели. Это важно, потому что провайдеры с
+дневной квотой *резервируют* запрошенный объём из бесплатного лимита: модель, которая
+отвечает на короткий запрос, может отбить чат-запрос 429 после того, как агент попросит свои
+8192 токена. Прозвон меньшим потолком красил такую модель в зелёный, хотя в чате она молчала.
+Теперь зелёный означает «выдержит тот же запрос, что и чат». Если у модели потолок не указан,
+прозвон берёт общий размер из `config.json`.
+
+### Два режима прозвона: Быстрый и Полный
+
+В шапке панели есть переключатель **Быстрый | Полный** (сохраняется в `config.json → scan_mode`):
+
+- **Полный** (по умолчанию) просит настоящий ответ в несколько предложений — честный вердикт, но
+  медленнее: медленная бесплатная модель может думать ~20 с. Нужен, чтобы знать, отвечает ли модель
+  реально в чате.
+- **Быстрый** просит одно слово (`pong`) — мгновенно и дешево, но **ненадёжно**: модель, которая
+  переживает только односложный ping (например, при лимите выходных токенов в минуту), тут может
+  выглядеть живой, а в чате всё равно упасть. Годится для быстрого «что-нибудь явно лежит?».
+
+Каждая строка прозвона помнит, каким режимом получена (`probes.mode`). Разовый **«Разовый скан»**
+использует выбранный сейчас режим, не меняя сохранённую настройку; **«Постоянный скан»** и прогоны
+по расписанию — сохранённый режим. В консоли так же: `python once.py --mode quick`,
+`python server.py --quick` / `--full`.
 
 ### Когда модель вернётся
 
@@ -417,7 +471,7 @@ pyinstaller --clean --noconfirm ModelPulse.spec   # -> dist/ModelPulse.exe
 ```
 
 Флаги командной строки работают и у exe: `--port`, `--interval`, `--open` / `--no-open`,
-`--scan-on-start`.
+`--scan-on-start`, `--quick` / `--full`.
 
 **Exe — дополнение, а не замена: старый способ установки работает как и раньше.** Клонируй
 репозиторий и запускай `start.cmd` (веб-монитор) или `once.cmd` (разовый отчёт), либо прямо
